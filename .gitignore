@@ -205,3 +205,24 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# --- Project Specific Ignores ---
+
+# KHÔNG BAO GIỜ đẩy dữ liệu (CSV, JSON, G pickle) lên Git
+/data_output/
+*.csv
+*.json
+*.gpickle
+
+# 2. Bỏ qua các file bí mật (API Keys)
+.env
+*.env
+
+# 3. Thư mục môi trường ảo (Python)
+.venv/
+venv/
+env/
+
+# 4. Bỏ qua các file hệ thống
+.DS_Store
+__pycache__/
