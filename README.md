@@ -120,7 +120,6 @@ Chúng tôi đã tích hợp thành công cả hai module vào một ứng dụn
 ### A. Yêu cầu Tiên quyết
 * Python 3.9+
 * Git
-* Một API Key từ [TMDb](https://www.themoviedb.org/) (Nếu dùng TMDb) hoặc không cần nếu dùng Wikidata.
 
 ### B. Cài đặt
 
