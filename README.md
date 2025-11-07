@@ -44,7 +44,7 @@ Dự án giải quyết hai mục tiêu chính:
 Dự án được xây dựng theo kiến trúc 3 tầng rõ rệt:
 
 1.  **Tầng Dữ liệu (Data Layer):**
-    * Một pipeline ETL (Extract-Transform-Load) được xây dựng để gọi API của Wikidata (dùng SPARQL), làm sạch (JSON -> "Golden Format" CSV), và nạp vào một đối tượng đồ thị `NetworkX` (`G_full.gpickle`).
+    * Một pipeline ETL (Extract-Transform-Load) được xây dựng để gọi API của Wikidata (dùng SPARQL), làm sạch và nạp vào một đối tượng đồ thị `NetworkX` (`G_full.gpickle`).
 2.  **Tầng Logic (Logic Layer):**
     * **Module 1 (BFS):** `src/module_1_bfs.py` (Quang) chứa logic `nx.shortest_path` để tìm đường đi.
     * **Module 2 (AI):** `src/ai_utils.py` và `train.py` (Tân) chứa toàn bộ logic AI, từ tạo mẫu đến dự đoán.
@@ -125,8 +125,8 @@ Chúng tôi đã tích hợp thành công cả hai module vào một ứng dụn
 
 1.  **Clone (Tải về) kho chứa:**
     ```bash
-    git clone [https://github.com/](https://github.com/)[TEN_CUA_BAN]/KLTN-Link-Prediction.git
-    cd KLTN-Link-Prediction
+    git clone [https://github.com/](https://github.com/)minhquang0407/Social-Link-Prediction.git
+    cd Social-Link-Prediction
     ```
 
 2.  **Tạo môi trường ảo (Khuyến nghị):**
