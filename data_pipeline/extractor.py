@@ -6,7 +6,7 @@ class WikidataExtractor:
 
     def _run_paginated_query(self, base_query, output_filename):
         # (Logic "lật trang" (while True))
-        # (Đây là hàm "private", chỉ dùng nội bộ)
+        # (Hàm "private", chỉ dùng nội bộ)
         pass
 
     def fetch_all_relationships(self, relationship_queries, output_dir):
@@ -15,3 +15,4 @@ class WikidataExtractor:
         # (ví dụ: {"family": "SELECT..."})
         # và gọi _run_paginated_query cho mỗi cái.
         pass
+
