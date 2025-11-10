@@ -59,7 +59,7 @@ def load_sparql_result(raw_filepath: str) -> pd.DataFrame:
         print(f"LỖI: Cấu trúc JSON không đúng, không tìm thấy 'results.bindings'.")
         return pd.DataFrame()
     except Exception as e:
-        print(f"LÃI không xác định khi xử lý file {raw_filepath}: {e}")
+        print(f"LỖI không xác định khi xử lý file {raw_filepath}: {e}")
         return pd.DataFrame()
 
 
@@ -115,9 +115,8 @@ def run_v0_1_pipeline():
     """
     Hàm này thực hiện nhiệm vụ của Tuần 2:
     Chạy các hàm đã viết ở Tuần 1 để tạo ra sản phẩm.
-    [cite: 105]
-    """
 
+    """
     # Đường dẫn file input (do Quân cung cấp)
     RAW_FILE = "raw_data_v0.1_spouse.json"  # [cite: 81]
 
@@ -126,23 +125,19 @@ def run_v0_1_pipeline():
 
     print("--- Bắt đầu Pipeline v0.1 ---")
 
-    # 1. Extract & Transform (Load) [cite: 105]
+    # 1. Extract & Transform (Load)
     df = load_sparql_result(RAW_FILE)
 
     if not df.empty:
-        # 2. Build Graph [cite: 105]
+        # 2. Build Graph
         G = build_graph_v0_1(df)
 
         if G.number_of_nodes() > 0:
             # 3. Load (Save) [cite: 105]
-            # --- PHẦN SỬA LỖI ---
-            # DÒNG CŨ (BỊ LỖI): nx.write_gpickle(G, OUTPUT_GRAPH)
-
-            # DÒNG MỚI:
             print(f"Đang lưu đồ thị vào {OUTPUT_GRAPH}...")
             with open(OUTPUT_GRAPH, 'wb') as f:
                 pickle.dump(G, f)
-            # --- KẾT THÚC SỬA ---
+
 
             print(f"--- Pipeline v0.1 Hoàn tất! Đã lưu đồ thị vào {OUTPUT_GRAPH} ---")
         else:
