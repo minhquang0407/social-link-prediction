@@ -1,7 +1,27 @@
 import streamlit as st
 import time
 
+custom_css = """
+<style>
+/* Sidebar */
+section[data-testid="stSidebar"] {
+    background-color: #0004ffff; /* Màu nền sidebar */
+    color: white; /* **Màu chữ trắng** cho sidebar */
+}
 
+/* body */
+body {
+    background-color: #f0f2f6;
+    color: #1a1a1a;
+}
+
+.main-content {
+    color: #1a1a1a;
+}
+</style>
+"""
+
+st.markdown(custom_css, unsafe_allow_html=True)
 def typewriter_effect(text: str, speed: float = 0.045):
     """
     Hàm này nhận một chuỗi (text) và "gõ" nó ra.

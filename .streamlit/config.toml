@@ -2,11 +2,10 @@
 
 [theme]
 
-backgroundColor = "#f0f2f6"  # (Ví dụ: màu xám nhạt)
+secondaryBackgroundColor = "#8d8888ff" 
 
-secondaryBackgroundColor = "#e0e4eb" # (Ví dụ: màu xám đậm hơn)
 
-textColor = "#070707ff"
 
 
 font = "sans serif"
+gatherUsageStats = false
