@@ -1,4 +1,19 @@
+networkx>=3.0
 pandas
+numpy
+
+streamlit
 pyvis
-networkx
-sparqlwrapper
+
+# Lưu ý: PyTorch nên cài riêng bằng lệnh
+torch
+torch-geometric
+sentence-transformers
+scikit-learn
+
+# Utils
+thefuzz
+python-Levenshtein
+unidecode
+SPARQLWrapper
+tqdm
