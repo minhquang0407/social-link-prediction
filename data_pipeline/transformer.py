@@ -2,9 +2,8 @@ import networkx as nx
 import pandas as pd
 import json
 import pickle
-import re
-from itertools import combinations
-
+import unicodedata
+from collections import defaultdict
 
 class GraphTransformer:
     def __init__(self):
@@ -12,13 +11,13 @@ class GraphTransformer:
         Khởi tạo đồ thị rỗng và dictionary chứa sở thích tạm thời
         """
         self.G = nx.Graph()
-        self.person_interests_map = {}  # Dùng để gom sở thích: { "ID_Person": {"Football", "Music"} }
+        self.person_interests_map = defaultdict(set)  # Dùng defaultdict(set)
         print("GraphTransformer initialized.")
 
     def _load_and_flatten_json(self, raw_filepath):
         """
         Load file JSON và làm phẳng bằng json_normalize.
-        Luôn trả về DataFrame (có thể rỗng).
+        Trả về DataFrame đã được làm sạch.
         """
         try:
             with open(raw_filepath, 'r', encoding='utf-8') as f:
@@ -35,140 +34,121 @@ class GraphTransformer:
 
             # Làm phẳng JSON -> DataFrame
             df = pd.json_normalize(data_to_normalize)
+
+            # Làm sạch DataFrame: loại bỏ .value trong tên cột nếu có
+            df.columns = [col.replace('.value', '') for col in df.columns]
+
             return df
 
         except Exception as e:
             print(f"LỖI LOAD FILE {raw_filepath}: {e}")
             return pd.DataFrame()
 
-    def _clean_label(self, label):
+    def _normalize_name(self, name):
         """
-        Làm sạch Label:
-        - Nếu label là None/NaN -> Trả về None
-        - Nếu label bắt đầu bằng 'Q' theo sau là số (VD: Q42, Q12345) -> Coi là rác, trả về None.
-        - Còn lại giữ nguyên.
+        Chuẩn hóa tên thành không dấu
         """
-        if pd.isna(label):
-            return None
+        if pd.isna(name) or not name:
+            return "Unknown"
 
-        label_str = str(label).strip()
-
-        # Regex kiểm tra pattern Q + số (VD: ^Q\d+$)
-        if re.match(r'^Q\d+$', label_str):
-            return None
-
-        return label_str
+        # Loại bỏ dấu và chuyển về chữ thường
+        name_str = str(name).strip()
+        normalized = unicodedata.normalize('NFKD', name_str)
+        normalized = ''.join([c for c in normalized if not unicodedata.combining(c)])
+        return normalized
 
     def _aggregate_interests(self, file_list):
         """
         Gom tất cả sở thích từ danh sách file vào self.person_interests_map.
         Không thêm vào đồ thị ngay, chỉ lưu vào Dict để tra cứu sau.
-        Input: file_list = [("path/to/interest.json", "interest_col_name"), ...]
         """
         print("Đang tổng hợp dữ liệu sở thích (Interests)...")
         for filepath, interest_obj_col in file_list:
             df = self._load_and_flatten_json(filepath)
 
-            # Cần cột person.value và cột chứa sở thích (VD: interest.value)
-            if 'person.value' not in df.columns:
+            # Cần cột person và cột chứa sở thích
+            if 'person' not in df.columns:
                 continue
 
-            # Tìm tên cột label của sở thích (VD: interestLabel.value)
-            # Thường file SPARQL sẽ có cột: objectLabel.value hoặc tên_cụ_thểLabel.value
-            # Ở đây ta sẽ tìm cột có đuôi 'Label.value' tương ứng với interest_obj_col
-            label_col = f"{interest_obj_col}Label.value"
-
-            # Nếu không tìm thấy đúng tên cột label, thử dùng 'objectLabel.value' mặc định
-            if label_col not in df.columns and 'objectLabel.value' in df.columns:
-                label_col = 'objectLabel.value'
+            # Tìm tên cột label của sở thích
+            label_col = f"{interest_obj_col}Label"
+            if label_col not in df.columns and 'objectLabel' in df.columns:
+                label_col = 'objectLabel'
 
             if label_col not in df.columns:
                 continue
 
             for _, row in df.iterrows():
-                p_id = row['person.value']
-                # Lấy label sở thích và làm sạch
+                # Lấy ID person bằng cách tách phần cuối của URL
+                p_id = row['person'].split('/')[-1]
                 raw_interest = row[label_col]
-                clean_interest = self._clean_label(raw_interest)
 
-                if p_id and clean_interest:
-                    if p_id not in self.person_interests_map:
-                        self.person_interests_map[p_id] = set()
-                    self.person_interests_map[p_id].add(clean_interest)
+                if p_id and raw_interest and not pd.isna(raw_interest):
+                    # Không cần làm sạch label sở thích
+                    self.person_interests_map[p_id].add(str(raw_interest))
 
         print(f"-> Đã tổng hợp sở thích cho {len(self.person_interests_map)} người.")
 
     def _add_generic_relation(self, df, target_node_type, rel_label):
         """
         Thêm quan hệ chung vào đồ thị.
-        - target_node_type: Loại node đích (chỉ để log hoặc mở rộng sau này).
-        - rel_label: Tên cạnh (VD: "spouse", "member of").
-        - Logic: Luôn tìm cột 'person' và 'object'.
         """
-        # Các cột bắt buộc cơ bản
-        p_id_col = "person.value"
-        p_label_col = "personLabel.value"
-        obj_id_col = "object.value"  # Mặc định SPARQL nên trả về ?object
-        obj_label_col = "objectLabel.value"
+        # Các cột bắt buộc cơ bản (đã bỏ .value)
+        p_id_col = "person"
+        p_label_col = "personLabel"
+        obj_id_col = "object"
+        obj_label_col = "objectLabel"
 
-        # Map các cột thuộc tính bổ sung (nếu có trong file JSON)
-        # Key: Tên cột trong DataFrame -> Value: Tên thuộc tính lưu vào Node
+        # Map các cột thuộc tính bổ sung
         attribute_map = {
-            "personDescription.value": "description",
-            "dob.value": "date_of_birth",
-            "pobLabel.value": "place_of_birth",  # Lấy Label nơi sinh
-            "countryLabel.value": "nationality"  # Lấy Label quốc tịch
+            "personDescription": "description",
+            "birthYear": "date_of_birth",
+            "birthPlaceLabel": "place_of_birth",
+            "countryLabel": "nationality"
         }
 
         # Kiểm tra cột cơ bản
         if p_id_col not in df.columns or obj_id_col not in df.columns:
-            print(f"  [SKIP] File thiếu cột ID (person.value hoặc object.value).")
+            print(f"  [SKIP] File thiếu cột ID (person hoặc object).")
             return
 
         count = 0
         for _, row in df.iterrows():
             # 1. Xử lý PERSON (Node nguồn)
-            p_id = row[p_id_col]
-            # Ưu tiên lấy label từ dữ liệu, nếu lỗi Q-ID thì bỏ qua dòng này hoặc lấy ID làm tên tạm (tùy logic)
-            # Ở đây: Nếu tên là Q-ID thì coi như không hợp lệ -> Bỏ qua label đó (Node vẫn tạo nhưng tên là ID hoặc None)
-            p_name_raw = row.get(p_label_col, None)
-            p_name = self._clean_label(p_name_raw)
+            p_id = row[p_id_col].split('/')[-1]  # Lấy phần cuối của URL
 
-            if not p_name:
-                # Nếu không có tên đẹp, dùng ID làm tên hiển thị tạm, hoặc skip tùy bạn.
-                # Ở đây tôi dùng ID làm tên để không mất node.
-                p_name = str(p_id).split('/')[-1]
+            # Lấy tên và chuẩn hóa
+            p_name_raw = row.get(p_label_col, "Unknown")
+            p_name = self._normalize_name(p_name_raw)
 
-                # Tạo dict attributes cho Person
+            # Tạo dict attributes cho Person
             person_attrs = {"name": p_name, "type": "Person"}
 
-            # Thêm các thuộc tính bổ sung (dob, place...)
+            # Thêm các thuộc tính bổ sung
             for col_df, attr_name in attribute_map.items():
                 if col_df in df.columns:
                     val = row[col_df]
                     if not pd.isna(val):
                         person_attrs[attr_name] = str(val)
 
-            # Nếu người này có trong map sở thích, thêm vào attributes luôn
+            # Xử lý sở thích: join thành string
             if p_id in self.person_interests_map:
-                # Chuyển set thành list để tương thích JSON/Gpickle tốt hơn
-                person_attrs["interests"] = list(self.person_interests_map[p_id])
+                person_attrs["interests"] = ", ".join(sorted(self.person_interests_map[p_id]))
             else:
-                person_attrs["interests"] = []
+                person_attrs["interests"] = ""
 
             # Add Node Person
             self.G.add_node(p_id, **person_attrs)
 
             # 2. Xử lý OBJECT (Node đích)
-            obj_id = row[obj_id_col]
-            obj_name_raw = row.get(obj_label_col, None)
-            obj_name = self._clean_label(obj_name_raw)
+            obj_id = row[obj_id_col].split('/')[-1]  # Lấy phần cuối của URL
+            obj_name = row.get(obj_label_col, "Unknown")
 
-            if not obj_name:
-                obj_name = str(obj_id).split('/')[-1]
+            # Không cần chuẩn hóa tên cho object
+            if pd.isna(obj_name) or not obj_name:
+                obj_name = "Unknown"
 
             # Add Node Object (Target)
-            # Node đích thường ít thuộc tính hơn, chủ yếu là name và type
             self.G.add_node(obj_id, name=obj_name, type=target_node_type)
 
             # 3. Add Edge
@@ -179,20 +159,13 @@ class GraphTransformer:
 
     def build_full_graph(self, config_list, interest_files_config=None):
         """
-        Hàm chính:
-        1. Tổng hợp interests (nếu có).
-        2. Lặp qua config_list để xây dựng đồ thị chính.
-
-        Input:
-        - config_list: List các tuple ("filepath", "target_type", "label")
-        - interest_files_config: List các tuple ("filepath", "object_prefix_in_query")
+        Hàm chính xây dựng đồ thị
         """
-
-        # BƯỚC 1: Xử lý sở thích trước (để có dữ liệu gán vào Node Person)
+        # BƯỚC 1: Xử lý sở thích trước
         if interest_files_config:
             self._aggregate_interests(interest_files_config)
 
-        # BƯỚC 2: Xử lý các quan hệ chính (Vợ chồng, bạn bè, công việc...)
+        # BƯỚC 2: Xử lý các quan hệ chính
         print("\nBẮT ĐẦU XÂY DỰNG ĐỒ THỊ...")
         for path, target_type, rel_label in config_list:
             print(f"Đang xử lý file: {path} (Quan hệ: {rel_label})")
@@ -213,27 +186,54 @@ class GraphTransformer:
         except Exception as e:
             print(f"Lỗi khi lưu file: {e}")
 
+
 if __name__ == "__main__":
     transformer = GraphTransformer()
-    # 1. Cấu hình file Sở thích (Interests)
-    # Format: (đường_dẫn_file, tiền_tố_của_biến_object_trong_query)
-    # Ví dụ query là: SELECT ?person ?interest ?interestLabel ... -> tiền tố là "interest" (để code tìm cột interestLabel.value)
+
+    # 1. Cấu hình file Sở thích (Interests) - Dựa trên ảnh
+    # Cấu trúc: ("đường_dẫn_file", "tên_cột_trong_file_gốc_để_ghép_label")
+    # Lưu ý: Bạn cần mở file json ra xem cái key chứa ID sở thích là gì (ví dụ: 'instrument', 'genre', 'field')
     interest_configs = [
-        ("data/raw_interests_music.json", "interest"),
-        ("data/raw_interests_books.json", "book")
+        ("data/raw_data_interest_instrument.json", "instrument"),
+        ("data/raw_data_interest_genre.json", "genre"),
+        ("data/raw_data_interest_field.json", "field"),
     ]
-    # 2. Cấu hình file Quan hệ (Edges)
-    # Format: (đường_dẫn_file, loại_node_đích, tên_quan_hệ)
-    # Lưu ý: Trong query SPARQL của các file này, biến đích phải đặt là ?object và ?objectLabel
+
+    # 2. Cấu hình file Quan hệ (Edges) - Dựa trên ảnh
+    # Cấu trúc: ("đường_dẫn_file", "Loại_Node_Đích", "Tên_Quan_Hệ")
     relation_configs = [
-        ("data/raw_data_spouse.json", "Person", "spouse"),  # Vợ/chồng
-        ("data/raw_data_university.json", "University", "educated_at"),  # Trường học
-        ("data/raw_data_party.json", "PoliticalParty", "member_of"),  # Đảng phái
+        # --- Quan hệ gia đình/xã hội ---
+        ("data/raw_data_spouse.json", "Person", "spouse"),
+        ("data/raw_data_mother.json", "Person", "mother"),
+        ("data/raw_data_father.json", "Person", "father"),
+        ("data/raw_data_sibling.json", "Person", "sibling"),
+
+        # --- Quan hệ nghề nghiệp/tác phẩm ---
+        ("data/raw_data_film_actor.json", "Film", "acted_in"),
+        ("data/raw_data_film_director.json", "Film", "directed"),
+        ("data/raw_data_film_screenwriter.json", "Film", "wrote"),
+        ("data/raw_data_music_composer.json", "MusicalWork", "composed"),
+        ("data/raw_data_music_lyricist.json", "MusicalWork", "wrote_lyrics"),
+        ("data/raw_data_performer.json", "MusicalWork", "performed"),
+        ("data/raw_data_author.json", "Book", "wrote_book"),
+
+        # --- Quan hệ tổ chức/tôn giáo/tư tưởng ---
+        ("data/raw_data_party.json", "PoliticalParty", "member_of_party"),
+        ("data/raw_data_religion.json", "Religion", "religion"),
+        ("data/raw_data_group.json", "Group", "member_of_group"),
+        ("data/raw_data_ideology.json", "Ideology", "political_ideology"),
+
+        # --- Quan hệ học vấn/khác ---
+        ("data/raw_data_advisor.json", "Person", "doctoral_advisor"),
+        ("data/raw_data_influenced.json", "Person", "influenced_by"),
     ]
+
     # 3. Chạy Pipeline
+    # Code sẽ tự động bỏ qua các file không tìm thấy hoặc lỗi
     transformer.build_full_graph(
         config_list=relation_configs,
         interest_files_config=interest_configs
     )
-    # 4. Lưu
+
+    # 4. Lưu kết quả
     transformer.save_graph("data/G_full.gpickle")
