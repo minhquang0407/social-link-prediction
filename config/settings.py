@@ -5,23 +5,24 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 DATA_DIR = BASE_DIR / "data_output"
 
-RAW_DIR = DATA_DIR / "raw"
+CLEAN_DATA_DIR = DATA_DIR / "cleaned"
+RAW_JSON_DIR = DATA_DIR / "raw/json"
+RAW_PARQUET_DIR = DATA_DIR / "raw/parquet"
 GRAPH_DIR = DATA_DIR / "graph"
 TRAINING_DIR = DATA_DIR / "training"
 MODELS_DIR = DATA_DIR / "models"
 
-for d in [DATA_DIR, RAW_DIR, GRAPH_DIR, TRAINING_DIR, MODELS_DIR]:
+for d in [CLEAN_DATA_DIR,DATA_DIR, RAW_JSON_DIR, RAW_PARQUET_DIR, GRAPH_DIR, TRAINING_DIR, MODELS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
-
-GRAPH_PATH = GRAPH_DIR / "G_full.gpickle"
-
-
+RAW_PARQUET_PATH = RAW_PARQUET_DIR / "raw_master.parquet"
+CLEAN_DATA_PATH = CLEAN_DATA_DIR / "relationship_data.parquet"
+GRAPH_PATH = GRAPH_DIR / "relationship_graph.pkl"
 SEARCH_INDEX_PATH = GRAPH_DIR / "search_index.json"
 ANALYTICS_PATH = GRAPH_DIR / "analytics.json"
 
 
-PYG_DATA_PATH = TRAINING_DIR / "processed_data.pt"
+PYG_DATA_PATH = TRAINING_DIR / "pyg_data.pt"
 MAPPING_PATH = TRAINING_DIR / "mappings.pkl"
 
 MODEL_PATH = MODELS_DIR / "model.pth"
@@ -37,3 +38,6 @@ LEARNING_RATE = 0.01
 EPOCHS = 100
 BATCH_SIZE = 128
 FUZZY_THRESHOLD = 60.0
+
+MAX_YEAR = 2025
+MIN_YEAR = 1800
