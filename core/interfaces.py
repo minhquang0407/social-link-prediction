@@ -65,7 +65,7 @@ class IPathFinder(ABC):
     """
 
     @abstractmethod
-    def find_path(self, graph, start_id, end_id):
+    def find_path(self, graph, start_id, end_id, strong):
         """
         Tìm đường đi giữa 2 điểm.
         Args:
@@ -75,6 +75,7 @@ class IPathFinder(ABC):
         Returns:
             tuple: (list_ids, list_names) - Danh sách ID và Tên trên đường đi.
                    Trả về ([], []) nếu không tìm thấy.
+                   :param strong:
         """
         pass
 

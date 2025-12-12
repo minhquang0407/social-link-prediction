@@ -16,6 +16,7 @@ class PyGDataRepository(ITrainingDataRepository):
         self.mapping_path = mapping_path
 
     def save_data(self, data, mapping):
+        data = self._compress_hetero_data(data)
         try:
             # Đảm bảo thư mục cha tồn tại
             os.makedirs(os.path.dirname(self.data_path), exist_ok=True)
@@ -31,6 +32,14 @@ class PyGDataRepository(ITrainingDataRepository):
             print(f"REPO ERROR: {e}")
             return False
 
+    def _compress_hetero_data(self, data):
+
+        for edge_type in data.edge_types:
+            if hasattr(data[edge_type], 'edge_index') and data[edge_type].edge_index is not None:
+                # Giảm kích thước xuống một nửa
+                data[edge_type].edge_index = data[edge_type].edge_index.to(torch.int32)
+
+        return data
     def load_data(self):
         if not os.path.exists(self.data_path) or not os.path.exists(self.mapping_path):
             return None, None

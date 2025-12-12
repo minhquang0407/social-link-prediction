@@ -1,10 +1,10 @@
 networkx>=3.0
 pandas
 numpy
-
+SPARQLWrapper
+fastparquet
 streamlit
 pyvis
-
 # Lưu ý: PyTorch nên cài riêng bằng lệnh
 torch
 torch-geometric
@@ -15,5 +15,4 @@ scikit-learn
 thefuzz
 python-Levenshtein
 unidecode
-SPARQLWrapper
 tqdm

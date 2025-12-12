@@ -1,17 +1,60 @@
-from settings import DEFAULT_PAGE_SIZE
+from config.settings import DEFAULT_PAGE_SIZE
 PAGE_SIZE = DEFAULT_PAGE_SIZE
 
 BASE_QUERY = """
-SELECT 
-?person ?personLabel ?personDescription (YEAR(?person_dob) AS ?birthYear) ?birthPlace ?birthPlaceLabel
-?country ?countryLabel ?object ?objectLabel ?objectDescription ?relationshipLabel
+SELECT ?person ?personLabel ?personDescription (YEAR(?person_dob) AS ?birthYear) 
+       ?birthPlace ?birthPlaceLabel 
+       ?country ?countryLabel 
+       ?object ?objectLabel ?objectDescription 
+       ?objectTypeLabel 
+       ?relationshipLabel
 WHERE {
-    ?person wdt:P31 wd:Q5. 
-    ?person wdt:P569 ?person_dob.
-    ##YEAR_FILTER_HOOK##
-    ##FIND_HOOK##       
+    ?person wdt:P31 wd:Q5;
+          wdt:P569 ?person_dob. 
+     
+    ##YEAR_FILTER_HOOK##  
+    ##FIND_HOOK## 
     
-    OPTIONAL { 
+    OPTIONAL { ?person wdt:P19 ?birthPlace. }
+    OPTIONAL { ?person wdt:P27 ?country. }
+    OPTIONAL { ?object wdt:P31 ?objectType. }
+    
+    SERVICE wikibase:label { 
+        bd:serviceParam wikibase:language "en,vi". 
+    }
+}
+ORDER BY ?person
+"""
+
+ADVANCED_QUERY = """
+SELECT ?person ?personLabel ?personDescription (YEAR(?person_dob) AS ?birthYear) ?birthPlace ?birthPlaceLabel
+?country ?countryLabel ?object ?objectLabel ?objectDescription ?objectType
+WHERE {
+
+  ?person wdt:P31 wd:Q5;     
+          wdt:P27 wd:Q881.               # Quốc tịch Việt Nam
+          
+  ?person wdt:P569 ?person_dob.
+  
+  ##YEAR_FILTER_HOOK##
+
+  VALUES ?relation {
+    wdt:P40    # Con cái (Child) -> Để suy ra cháu chắt thì dùng Graph BFS
+    wdt:P26    # Vợ chồng (Spouse)
+    wdt:P3373  # Anh chị em (Sibling)
+    wdt:P22    # Cha (Father)
+    wdt:P25    # Mẹ (Mother)
+    
+    wdt:P108   # Chủ lao động/Công ty (Employer) -> Để suy ra đồng nghiệp
+    wdt:P463   # Thành viên của (Member of) -> Đảng, Hội nhóm
+    wdt:P1344  # Tham gia sự kiện/Dự án (Participant in)
+    wdt:P1066  # Học trò của (Student of)
+    wdt:P184   # Người hướng dẫn (Doctoral advisor)
+    wdt:P69    # Học tại trường (Educated at) -> Để suy ra bạn học
+  }
+  
+  ?person ?relation ?object.
+  OPTIONAL { 
       ?person wdt:P19 ?birthPlace. 
       ?birthPlace rdfs:label ?birthPlaceLabel. 
     }
@@ -19,12 +62,13 @@ WHERE {
       ?person wdt:P27 ?country. 
       ?country rdfs:label ?countryLabel. 
     }
-    SERVICE wikibase:label { 
-        bd:serviceParam wikibase:language "vi,en". 
-    }
+    
+  OPTIONAL { ?object wdt:P31 ?objectType. }
+
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "vi,en". }
 }
-ORDER BY
 """
+
 
 SPOUSE = """
 { ?person wdt:P26 ?object. BIND("spouse" AS ?relationshipLabel) }
@@ -74,7 +118,8 @@ POLITICAL_IDEOLOGY = """
 MEMBER_OF_GROUP = """
 { 
   ?person wdt:P463 ?object. 
-  BIND("member_of" AS ?relationshipLabel) 
+  BIND("member_of_group" AS ?relationshipLabel)
+  BIND("group" AS ?relationshipLabel) 
 }
 """
 EMPLOYER = """
@@ -195,19 +240,19 @@ INTEREST_GENRE = """
 """
 
 ALL_QUERIES =   {
-        "spouse": (SPOUSE, PAGE_SIZE),
-        "father": (FATHER, PAGE_SIZE),
-        "mother": (MOTHER, PAGE_SIZE),
-        "sibling": (SIBLING, PAGE_SIZE),
+        #"spouse": (SPOUSE, PAGE_SIZE),
+        #"father": (FATHER, PAGE_SIZE),
+        #"mother": (MOTHER, PAGE_SIZE),
+        #"sibling": (SIBLING, PAGE_SIZE),
         "education": (EDUCATION, PAGE_SIZE),
         # "interest_field": (INTEREST_FIELD, PAGE_SIZE),
-        # "interest_sport": (INTEREST_SPORT, PAGE_SIZE),
+        "interest_sport": (INTEREST_SPORT, PAGE_SIZE),
         # "interest_instrument": (INTEREST_INSTRUMENT, PAGE_SIZE),
         # "interest_genre": (INTEREST_GENRE, PAGE_SIZE),
         # "event": (EVENT_PARTICIPANT, PAGE_SIZE),
         # "party": (POLITICAL_PARTY, PAGE_SIZE),
         # "group": (MEMBER_OF_GROUP, PAGE_SIZE),
-        # "employer": (EMPLOYER, PAGE_SIZE),
+        "employer": (EMPLOYER, PAGE_SIZE),
         # "performer": (PERFORMER, PAGE_SIZE),
         # "film_actor": (FILM_ACTOR, PAGE_SIZE),
         # "film_director": (FILM_DIRECTOR, PAGE_SIZE),
@@ -215,7 +260,7 @@ ALL_QUERIES =   {
         # "music_composer": (MUSIC_COMPOSER, PAGE_SIZE),
         # "music_lyricist": (MUSIC_LYRICIST, PAGE_SIZE),
         # "author": (AUTHOR, PAGE_SIZE),
-        # "award": (AWARD, PAGE_SIZE),
+        "award": (AWARD, PAGE_SIZE),
         # "position": (POSITION_HELD, PAGE_SIZE),
         # "partner": (PARTNER, PAGE_SIZE),
         # "student": (STUDENT_OF, PAGE_SIZE),

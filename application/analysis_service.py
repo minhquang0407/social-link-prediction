@@ -1,4 +1,4 @@
-from core.algorithms.bfs import NetworkXBFSFinder
+from core.algorithms import NetworkXBFSFinder
 from core.interfaces import ISearchEngine
 
 
@@ -22,10 +22,11 @@ class AnalysisService:
         # Gọi hàm search_best từ file fuzzy_search.py thông qua Interface
         return self.search_engine.search_best(query_name, threshold)
 
-    def find_connection(self, id_a, id_b):
+    def find_connection(self, id_a, id_b, strong=False):
         """
         Tìm đường đi giữa 2 người.
         """
+
         # 1. Kiểm tra dữ liệu đầu vào
         str_id_a = str(id_a)
         str_id_b = str(id_b)
@@ -43,7 +44,7 @@ class AnalysisService:
             return {"success": False, "message": f"ID '{id_b}' không tồn tại."}
 
         # 3. Gọi thuật toán BFS
-        ids, names = self.path_finder.find_path(self.graph, id_a, id_b)
+        ids, names = self.path_finder.find_path(self.graph, id_a, id_b, strong)
 
         if ids:
             return {

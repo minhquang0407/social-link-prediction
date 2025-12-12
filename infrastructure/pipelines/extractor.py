@@ -2,10 +2,14 @@ import sys
 import json
 import os
 import time
+from pathlib import Path
+
+PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
+sys.path.append(str(PROJECT_DIR))
 from datetime import datetime
 from SPARQLWrapper import SPARQLWrapper, JSON
-from queries import QueryTemplates as qt
-
+from config.queries import ALL_QUERIES, BASE_QUERY
+from config.settings import RAW_JSON_DIR
 
 # hàm ghi log
 def log_query_info(file_name, total_count, log_file="query_log.txt"):
@@ -170,13 +174,11 @@ class WikidataExtractor:
 
 
     def fetch_all_relationships(self, relationship_queries, start, end, output_dir="data"):
-        os.makedirs(output_dir, exist_ok=True) # kiểm tra thư mục có tồn tại không, nếu chưa thì tạo
-        base_query = qt.BASE  # lấy khung truy vấn cơ bản từ class QueryTemplates
-
+        os.makedirs(output_dir, exist_ok=True)
         for name, (snippet, page_size) in relationship_queries.items():
 
             print(f"\n\n################ STARTING JOB: {name} ################")
-            full_query = base_query.replace("##FIND_HOOK##", snippet) # thêm truy vấn  con
+            full_query =BASE_QUERY.replace("##FIND_HOOK##", snippet) # thêm truy vấn  con
             all_bindings = self._run_interval_query(start, end, full_query, page_size) # chạy truy vấn
 
             self._save_data(all_bindings, name, output_dir)  # lưu kết quả
@@ -188,9 +190,6 @@ class WikidataExtractor:
 
 if __name__ == "__main__":
     YOUR_USER_AGENT = "SocialLinkPredictionBot/1.0 (naqaq2005@gmail.com)"
-    OUTPUT_DIR = os.path.join("..", "data_output")
-
-    queries_to_run = qt().get_all_queries()
 
     extractor = WikidataExtractor(user_agent=YOUR_USER_AGENT)
-    extractor.fetch_all_relationships(queries_to_run, 1800, 2025, OUTPUT_DIR)
+    extractor.fetch_all_relationships(ALL_QUERIES, 1800, 2025, str(RAW_JSON_DIR))
