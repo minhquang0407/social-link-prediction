@@ -1,117 +1,81 @@
-import torch
+import pandas as pd
 import numpy as np
-from torch_geometric.data import HeteroData
-from collections import defaultdict
+import torch
 from sentence_transformers import SentenceTransformer
-import networkx as nx
-from tqdm import tqdm
+from torch_geometric.data import HeteroData
 
 
 class GraphDataProcessor:
     """
-    1. Tạo vector đặc trưng từ thuộc tính node.
-    2. Chuyển đổi đồ thị NetworkX sang PyG HeteroData.
+    Hệ thống xử lý dữ liệu đồ thị:
+    1. Tạo vector đặc trưng (node features) bằng SBERT và chuẩn hóa dữ liệu số.
+    2. Chuyển đổi DataFrame thành cấu trúc HeteroData của PyTorch Geometric.
     """
 
-    def __init__(self):
-        print("CORE: Đang tải model Sentence-BERT...")
-        # TODO: Khởi tạo SentenceTransformer với mô hình đã chọn ('paraphrase-multilingual-MiniLM-L12-v2').
+    def __init__(self, model_name='paraphrase-multilingual-MiniLM-L12-v2'):
+        print(f"CORE: Đang khởi tạo model {model_name}...")
+        # TODO: Khởi tạo self.text_encoder và cấu hình thiết bị (cuda/cpu)
         self.text_encoder = None
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    def _create_node_features(self, G, node_list, ntype):
+    def _create_node_features(self, df: pd.DataFrame):
         """
-        (Hàm nội bộ) Tạo ma trận đặc trưng cho một danh sách node cùng loại.
+        TODO: Xử lý vector đặc trưng cho Node
+        1. Kết hợp các cột text thành một chuỗi duy nhất.
+        2. Sử dụng SBERT để encode chuỗi thành embeddings.
+        3. Chuẩn hóa cột 'birthYear' về khoảng [0, 1].
+        4. Concatenate embedding và year_norm thành một tensor duy nhất.
         """
-        # TODO: Khởi tạo danh sách chứa các chuỗi văn bản (features) và năm sinh (nếu là 'person').
-        feature_text_list = []
-        years = []
-        MIN_YEAR, MAX_YEAR = 1900, 2025  # Cấu hình chuẩn hóa năm sinh
+        # Gợi ý logic:
+        # text_data = df['name'] + ...
+        # feature_vec = self.text_encoder.encode(...)
+        # year_norm = (year - min) / (max - min)
 
-        # TODO: Lặp qua node_list để thu thập thuộc tính.
-        for node_id in node_list:
-            node_data = G.nodes[node_id]
+        print("TODO: Thực hiện logic tạo features tại đây")
+        return None  # Trả về torch.FloatTensor
 
-            # TODO: Trích xuất các thuộc tính văn bản (name, description, interests, birthplace, country).
-            # TODO: Ghép các thuộc tính văn bản thành một chuỗi `full_text` duy nhất.
-            # TODO: Thêm `full_text` vào `feature_text_list`.
-
-            if ntype == 'person':
-                # TODO: Lấy và chuyển đổi 'birthYear' thành số float, dùng try-except và gán giá trị mặc định.
-                # TODO: Kẹp giá trị năm sinh giữa MIN_YEAR và MAX_YEAR.
-                # TODO: Chuẩn hóa năm sinh về [0, 1] và thêm vào `years`.
-                pass  # Logic xử lý năm sinh
-
-        # TODO: Dùng self.text_encoder để encode `feature_text_list` thành tensor embedding.
-        embeddings = None
-        text_tensor = None
-
-        if ntype == 'person':
-            # TODO: Chuyển `years` thành tensor float, reshape thành cột (view(-1, 1)).
-            # TODO: Nối (concatenate) `text_tensor` và `year_tensor` theo chiều ngang (dim=1) và trả về.
-            return None
-        else:
-            # TODO: Trả về `text_tensor`.
-            return None
-
-    def process_graph_to_pyg(self, G):
+    def _create_nodes_data(self, df: pd.DataFrame):
         """
-        Input: NetworkX Graph
-        Output: (HeteroData, node_mapping, rev_node_mapping)
+        TODO: Chuẩn hóa dữ liệu thô thành DataFrame chứa Nodes
+        1. Tách và map các cột cho thực thể 'Person'.
+        2. Tách và map các cột cho thực thể 'Object'.
+        3. Hợp nhất (concat) và loại bỏ trùng lặp.
         """
-        print("CORE: Bắt đầu chuyển đổi đồ thị sang HeteroData...")
-        # TODO: Khởi tạo đối tượng PyG HeteroData.
-        data = None
+        print("TODO: Thực hiện logic chuẩn hóa danh sách node tại đây")
+        return None  # Trả về pd.DataFrame chứa: id, type, và các thuộc tính
 
-        ## 1. Xử lý Nodes & Features
+    def process_graph_to_pyg(self, df: pd.DataFrame):
+        """
+        TODO: Chuyển đổi toàn bộ dữ liệu sang PyG HeteroData
+        """
+        print("CORE: Bắt đầu chuyển đổi đồ thị...")
 
-        # TODO: Khởi tạo defaultdict để nhóm node ID theo 'type'.
-        # TODO: Lặp qua G.nodes, lấy 'type' và thêm node ID vào `node_by_type`.
-        # TODO: Khởi tạo node_mapping (String ID -> Int Index) và rev_node_mapping (Int Index -> String ID).
-        node_mapping = {}
-        rev_node_mapping = {}
+        # BƯỚC 1: Chuẩn bị dữ liệu node tổng hợp
+        df_nodes = self._create_nodes_data(df)
 
-        # TODO: Lặp qua từng loại node trong `node_by_type`.
-        for ntype, node_list in node_by_type.items():
-            # TODO: Tạo mapping/rev_mapping cho loại node hiện tại.
-            # TODO: Gọi self._create_node_features để tạo đặc trưng `data[ntype].x`.
-            # TODO: Gán số lượng node `data[ntype].num_nodes`.
-            pass  # Logic xử lý node
+        pyg_data = HeteroData()
+        node_mapping = {}  # Lưu {ntype: {original_id: integer_index}}
+        rev_node_mapping = {}  # Lưu {ntype: {integer_index: original_id}}
 
-        ## 2. Xử lý Edges
+        # BƯỚC 2: Xử lý Nodes & Features theo từng loại (ntype)
+        print("CORE: Đang xử lý Node Features...")
+        grouped_nodes = df_nodes.groupby('type')
+        for ntype, group in grouped_nodes:
+            # TODO:
+            # 1. Tạo mapping index cho loại node này
+            # 2. Gọi _create_node_features để lấy tensor đặc trưng
+            # 3. Gán vào pyg_data[ntype].x
+            pass
 
-        # TODO: Khởi tạo defaultdict để lưu chỉ mục cạnh theo meta-path ((src_type, rel, dst_type) -> [[src_indices], [dst_indices]]).
-        edges_dict = defaultdict(lambda: [[], []])
-        # TODO: Khởi tạo danh sách chỉ mục cho quan hệ 'person'->'knows'->'person' (hai chiều).
-        knows_src = []
-        knows_dst = []
+        # BƯỚC 3: Xử lý Edges (Quan hệ)
+        print("CORE: Đang xử lý Edges...")
+        # TODO:
+        # 1. Group dữ liệu theo loại quan hệ (relationshipLabel, objectType)
+        # 2. Dựa vào node_mapping để chuyển đổi ID gốc sang Index (int)
+        # 3. Tạo edge_index tensor và gán vào pyg_data[edge_type].edge_index
 
-        # TODO: Lặp qua G.edges(data=True) với tqdm.
-        for u, v, attr in tqdm(G.edges(data=True)):
-            # TODO: Lấy loại node của nguồn (u) và đích (v) từ G.nodes.
-            # TODO: Bỏ qua nếu loại node không xác định.
-            # TODO: Lấy nhãn quan hệ, mặc định là 'related_to'.
+        # Gợi ý: edge_type = ('human', rel_label, obj_type)
 
-            # TODO: Ánh xạ u, v String ID sang u_idx, v_idx Int Index bằng `node_mapping`.
-            # TODO: Tạo `edge_key` (src_type, rel_label, dst_type).
-            # TODO: Thêm u_idx, v_idx vào `edges_dict` tương ứng.
+        print("LOG: Quá trình chuyển đổi hoàn tất.")
+        return pyg_data, (node_mapping, rev_node_mapping)
 
-            # TODO: Nếu là 'person' -> 'person', thêm u_idx, v_idx vào `knows_src/dst`.
-            pass  # Logic xử lý edge
-
-        # TODO: Lặp qua `edges_dict` để tạo và gán `edge_index` cho PyG HeteroData.
-        for (src_t, rel, dst_t), (src_list, dst_list) in edges_dict.items():
-            # TODO: Tạo tensor `edge_index` cho cạnh thuận.
-            # TODO: Gán `data[src_t, rel, dst_t].edge_index`.
-            # TODO: Tạo cạnh ngược bằng cách đảo (flip) `edge_index` và gán `data[dst_t, f"rev_{rel}", src_t].edge_index`.
-            pass  # Logic gán edge_index
-
-        # TODO: Xử lý đặc biệt quan hệ 'knows' (person-person, hai chiều).
-        if knows_src:
-            # TODO: Tạo tensor cạnh thuận và nghịch cho 'knows'.
-            # TODO: Nối (concatenate) hai tensor để tạo `final_edge_index`.
-            # TODO: Gán `data['person', 'knows', 'person'].edge_index = final_edge_index`.
-            pass  # Logic xử lý knows
-
-        print("CORE: Chuyển đổi hoàn tất.")
-        # TODO: Trả về data (HeteroData) và tuple mappings.
-        return None
