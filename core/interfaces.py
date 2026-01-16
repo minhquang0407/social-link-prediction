@@ -97,6 +97,11 @@ class ISearchEngine(ABC):
         """
         pass
 
+    @abstractmethod
+    def quick_get_id(self, query_name):
+        pass
+
+
 # --- 5. HỢP ĐỒNG CHO CÔNG CỤ DỰ ĐOÁN (PREDICTOR) ---
 
 class ILinkPredictor(ABC):
@@ -105,14 +110,14 @@ class ILinkPredictor(ABC):
     """
 
     @abstractmethod
-    def predict_top_k_similar(self, target_vec,all_vectors, top_k=5)->tuple:
+    def recommend_top_k(self, target_vec,all_vectors, top_k=5)->tuple:
         """
         Tìm top người có thể liên kết với 1 người cho trước
         Returns: tuple (top người, id người)
         """
         pass
 
-    def predict_link_score(self, vec_a, vec_b) -> float:
+    def scan_relationship(self, id_a, id_b, src_type, dst_type, mode) -> float:
         """
         Dự đoán điểm liên kết giữa 2 vector đặc trưng.
         Returns: float (0.0 đến 1.0)
@@ -124,8 +129,8 @@ class ITrainingDataRepository(ABC):
     Giao diện để lưu/tải dữ liệu đã tiền xử lý cho AI (processed_data.pt).
     """
     @abstractmethod
-    def save_data(self, data, mapping):
-        """Lưu data (HeteroData) và mapping (dict)"""
+    def save_data(self, data):
+        """Lưu data (HeteroData) và mapping"""
         pass
 
     @abstractmethod

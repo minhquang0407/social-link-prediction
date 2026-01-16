@@ -1,9 +1,7 @@
 
 import sys
 from pathlib import Path
-FILE_PATH = Path(__file__).resolve()
-PROJECT_DIR = FILE_PATH.parent.parent.parent
-sys.path.append(str(PROJECT_DIR))
+
 from collections import defaultdict
 
 
@@ -37,6 +35,5 @@ def build_search_index(G):
 
     # Trả về cả Map (để RapidFuzz dùng)
     return search_map
-
 
 

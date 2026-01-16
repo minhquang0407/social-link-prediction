@@ -2,14 +2,10 @@ import sys
 import json
 import os
 import time
-from pathlib import Path
-
-PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
-sys.path.append(str(PROJECT_DIR))
 from datetime import datetime
 from SPARQLWrapper import SPARQLWrapper, JSON
-from config.queries import ALL_QUERIES, BASE_QUERY
 from config.settings import RAW_JSON_DIR
+from config.queries import BASE_QUERY, ALL_QUERIES
 
 # hàm ghi log
 def log_query_info(file_name, total_count, log_file="query_log.txt"):
@@ -41,7 +37,7 @@ class WikidataExtractor:
         self.sparql.setReturnFormat(JSON)
         self.sparql.setTimeout(300)
         self.current_json_head = None
-        self.step = 2
+
 
     def _run_paginated_query(self, base_query: str, page_size=10000) -> list:
 
@@ -112,24 +108,24 @@ class WikidataExtractor:
 
         return all_bindings
 
-    def _create_intervals(self,start_val, end_val) -> list:
+    def _create_intervals(self,start_val, end_val, step = 5) -> list:
         intervals = []
         current_start = start_val
         while current_start < end_val:
-            current_end = current_start + self.step
+            current_end = current_start + step
             if current_end > end_val:
                 current_end = end_val
             intervals.append((current_start, current_end))
             current_start = current_end
         return intervals
 
-    def _run_interval_query(self, start, end, base_query, page_size) -> list:
+    def _run_interval_query(self, start, end, base_query, page_size, step = 5 ) -> list:
         """
         Chạy query theo từng khoảng thời gian (Intervals).
         """
         self.current_json_head = None  # thiết lập lại json_head trước khi chạy
         all_bindings = []
-        intervals = self._create_intervals(start, end + 1)
+        intervals = self._create_intervals(start, end + 1, step)
 
         print(f"=========== BẮT ĐẦU CHẠY THEO KHOẢNG {start}-{end} ===========")
         start_time = datetime.now()
@@ -151,11 +147,11 @@ class WikidataExtractor:
         return all_bindings
 
 
-    def _save_data(self, all_bindings, name, output_dir="data"):
+    def _save_data(self, all_bindings, name):
         # đường dẫn cho file lưu truy vấn
-        output_filename = os.path.join(output_dir, f"raw_data_{name}.json")
+        output_filename = os.path.join(str(RAW_JSON_DIR), f"raw_data_{name}.json")
         # đường dẫn cho file ghi log
-        log_file_path = os.path.join(output_dir, "query_log.txt")
+        log_file_path = os.path.join(str(RAW_JSON_DIR), "query_log.txt")
 
         head_data = self.current_json_head if self.current_json_head else {"vars": []}
         final_json_output = {
@@ -172,16 +168,15 @@ class WikidataExtractor:
         except IOError as e:
             print(f"\n!!! LỖI KHI LƯU FILE: {e}", file=sys.stderr)
 
-
-    def fetch_all_relationships(self, relationship_queries, start, end, output_dir="data"):
-        os.makedirs(output_dir, exist_ok=True)
+    def fetch_all_relationships(self, relationship_queries, start, end, step):
+        os.makedirs(RAW_JSON_DIR, exist_ok=True)
         for name, (snippet, page_size) in relationship_queries.items():
 
             print(f"\n\n################ STARTING JOB: {name} ################")
-            full_query =BASE_QUERY.replace("##FIND_HOOK##", snippet) # thêm truy vấn  con
-            all_bindings = self._run_interval_query(start, end, full_query, page_size) # chạy truy vấn
+            full_query = BASE_QUERY.replace("##FIND_HOOK##", snippet) # thêm truy vấn  con
+            all_bindings = self._run_interval_query(start, end, full_query, page_size, step = step) # chạy truy vấn
 
-            self._save_data(all_bindings, name, output_dir)  # lưu kết quả
+            self._save_data(all_bindings, name, RAW_JSON_DIR)  # lưu kết quả
 
             time.sleep(1)
 
@@ -192,4 +187,4 @@ if __name__ == "__main__":
     YOUR_USER_AGENT = "SocialLinkPredictionBot/1.0 (naqaq2005@gmail.com)"
 
     extractor = WikidataExtractor(user_agent=YOUR_USER_AGENT)
-    extractor.fetch_all_relationships(ALL_QUERIES, 1800, 2025, str(RAW_JSON_DIR))
+    extractor.fetch_all_relationships(ALL_QUERIES, 1800, 2025,1)
