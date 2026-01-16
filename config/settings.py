@@ -11,7 +11,7 @@ RAW_PARQUET_DIR = DATA_DIR / "raw/parquet"
 GRAPH_DIR = DATA_DIR / "graph"
 TRAINING_DIR = DATA_DIR / "training"
 MODELS_DIR = DATA_DIR / "models"
-PREDICT_DIR = DATA_DIR / "predict"
+PREDICT_DIR = DATA_DIR / "predicting"
 for d in [CLEAN_DATA_DIR,DATA_DIR, RAW_JSON_DIR, RAW_PARQUET_DIR, GRAPH_DIR, TRAINING_DIR, MODELS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
