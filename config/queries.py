@@ -1,4 +1,4 @@
-from settings import DEFAULT_PAGE_SIZE
+from config.settings import DEFAULT_PAGE_SIZE
 PAGE_SIZE = DEFAULT_PAGE_SIZE
 
 BASE_QUERY = """
@@ -13,11 +13,9 @@ WHERE {
     
     OPTIONAL { 
       ?person wdt:P19 ?birthPlace. 
-      ?birthPlace rdfs:label ?birthPlaceLabel. 
     }
     OPTIONAL { 
       ?person wdt:P27 ?country. 
-      ?country rdfs:label ?countryLabel. 
     }
     SERVICE wikibase:label { 
         bd:serviceParam wikibase:language "vi,en". 

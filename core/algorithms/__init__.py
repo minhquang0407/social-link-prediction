@@ -1,1 +1,1 @@
-from .bfs import NetworkXBFSFinder
+from .bfs import PathFinder

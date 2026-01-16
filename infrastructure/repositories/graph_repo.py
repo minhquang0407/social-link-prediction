@@ -32,7 +32,6 @@ class PickleGraphRepository(IGraphRepository):
             # 2. Mở file chế độ Write Binary (wb)
             with open(self.file_path, "wb") as f:
                 pickle.dump(G, f, pickle.HIGHEST_PROTOCOL)
-
             print("REPO: Lưu thành công!")
             return True
 
@@ -56,7 +55,7 @@ class PickleGraphRepository(IGraphRepository):
             with open(self.file_path, "rb") as f:
                 G = pickle.load(f)
 
-            print(f"REPO: Tải thành công! (Nodes: {G.number_of_nodes()}, Edges: {G.number_of_edges()})")
+            print(f"REPO: Tải thành công! (Nodes: {G.vcount()}, Edges: {G.ecount()})")
             return G
 
         except Exception as e:

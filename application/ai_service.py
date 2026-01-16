@@ -1,62 +1,89 @@
 import torch
 import pickle
 from core.ai import Predictor
-
-
+import pandas as pd
+from config.settings import NODES_DATA_PATH
+from core.logic import RapidFuzzySearch
 class AIService:
-    def __init__(self, G_full, model, data, mapping):
+    def __init__(self, G_full, model, data, engine:RapidFuzzySearch):
         self.G_full = G_full
         self.model = model
         self.data = data
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.node_mapping, self.rev_node_mapping = mapping
-        self.predictor = Predictor()
+        print("AI: Đang khởi tạo bộ máy dự đoán!",flush=True)
+        # self.lookup = pd.read_parquet(NODES_DATA_PATH, engine='fastparquet')
+        # self.lookup  = self.lookup.reset_index(drop = False)
+        # self.lookup = self.lookup.set_index(['type','pyg_id'])
+        self.search_engine = engine
+        self.predictor = Predictor(model, data, self.device)
+        print("AI: Sẵn sàng!",flush=True)
 
-        print("AI: Đang tính toán sẵn các vector (Caching)...")
-        self.all_person_vectors = self.predictor.compute_all_embeddings(
-            self.model, self.data, self.device
-        )
-        print("AI: Sẵn sàng!")
+    def predict_link_score(self, name_src, name_dst):
+        src_type, id_src = self.search_engine.search_forward_pyg(name_src)
+        dst_type, id_src = self.search_engine.search_forward_pyg(name_dst)
 
-    def predict_top_partners(self, person_id, top_k=5):
-        """
-        Dự đoán Top đối tác tiềm năng.
-        """
-        # 1. Lấy Index từ ID
-        if person_id not in self.node_mapping['person']:
-            return []
-        p_idx = self.node_mapping['person'][person_id]
+        best_rel, max_score, results = self.predictor.scan_relationship(id_a, id_b, src_type, dst_type)
 
-        # 2. Lấy Vector của người đó (từ Cache)
-        z_A = self.all_person_vectors[p_idx]
+        print(f"║ PHÂN TÍCH QUAN HỆ: {src_type} #{id_src} vs {dst_type} #{id_dst} ║")
 
-        # 3. Gọi Predictor để tính toán Toán học
-        top_scores, top_indices = self.predictor.predict_top_k_similar(
-            z_A, self.all_person_vectors, top_k
-        )
+        # Sắp xếp kết quả
+        sorted_res = sorted(results.items(), key=lambda x: x[1], reverse=True)
 
-        # 4. Mapping ngược: Index -> Tên
-        results = []
-        for score, index in zip(top_scores, top_indices):
-            idx = index.item()
-            if idx == p_idx: continue
+        print(f"\n➤ DỰ ĐOÁN CHÍNH: [{best_rel.upper()}] (Độ tin cậy: {max_score:.2%})")
+        print("-" * 50)
 
-            real_id = self.rev_node_mapping['person'][idx]
-            name = self.G_full.nodes[real_id].get('name', 'Unknown')
+        for rel, score in sorted_res:
+            # Logic hiển thị thanh bar
+            bar_len = int(score * 25)
+            bar = "█" * bar_len + "░" * (25 - bar_len)
 
-            results.append((name, score.item()))
+            # Logic màu sắc (Text indication)
+            status = " "
+            if score > 0.8:
+                status = "(Rất cao)"
+            elif score > 0.5:
+                status = "(Có thể)"
 
-        return results[:top_k]
+            print(f"  {rel:<15} : {score:.4f}  {bar} {status}")
 
-    def predict_link_score(self, id_a, id_b):
-        """Dự đoán điểm giữa 2 người cụ thể"""
-        try:
-            idx_a = self.node_mapping['person'][id_a]
-            idx_b = self.node_mapping['person'][id_b]
+        print("-" * 50)
 
-            vec_a = self.all_person_vectors[idx_a]
-            vec_b = self.all_person_vectors[idx_b]
+    def recommendations_with_rel(self, src_name, rel_name, top_k=10):
+        """In báo cáo Top-K đẹp mắt."""
+        type, src_id = self.search_engine.search_forward_pyg(src_name)
+        print(f"\nĐang tìm Top {top_k} '{rel_name.upper()}' cho User #{src_id}...")
 
-            return self.predictor.predict_link_score(vec_a, vec_b)
-        except KeyError:
-            return 0.0
+        ids, scores = self.predictor.recommend_top_k_with_rel(src_id, rel_name, top_k, type)
+
+        print(f"╔══════════════════════════════════════╗")
+        print(f"║ DANH SÁCH GỢI Ý ({rel_name})             ║")
+        print(f"╠══════════════════════════════════════╣")
+
+        for rank, (uid, score) in enumerate(zip(ids, scores)):
+            # Vẽ thanh bar
+            bar_len = int(score * 20)
+            bar = "▓" * bar_len + "░" * (20 - bar_len)
+
+            print(f"║ #{rank + 1:02d} User {uid:<6} | {score:.4f} {bar} ║")
+
+        print(f"╚══════════════════════════════════════╝")
+
+    def print_recommendations(self, src_id, top_k=10, src_type='human', dst_type=None):
+        results = self.recommend(src_id, top_k, src_type, dst_type)
+
+        scope = f"LOẠI: {dst_type.upper()}" if dst_type else "TOÀN BỘ (GLOBAL)"
+        print(f"\n╔══════════════════════════════════════════════════════════════╗")
+        print(f"║ GỢI Ý KẾT NỐI CHO {src_type.upper()} #{src_id} | PHẠM VI: {scope:<12} ║")
+        print(f"╠══════════════════════════════════════════════════════════════╣")
+
+        for i, item in enumerate(results):
+            score = item['score']
+            target = f"{item['type']} #{item['id']}"
+            rel = f"[{item['relation'].upper()}]"
+
+            bar_len = int(score * 15)
+            bar = "▓" * bar_len + "░" * (15 - bar_len)
+
+            print(f"║ #{i + 1:02d} {target:<18} | {rel:<15} | {score:.4f} {bar} ║")
+
+        print(f"╚══════════════════════════════════════════════════════════════╝")

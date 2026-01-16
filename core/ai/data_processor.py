@@ -1,11 +1,9 @@
 import torch
 import numpy as np
 from torch_geometric.data import HeteroData
-from collections import defaultdict
 from sentence_transformers import SentenceTransformer
-import networkx as nx
-from tqdm import tqdm
-
+from torch_geometric.transforms import ToUndirected
+import pandas as pd
 
 class GraphDataProcessor:
     """
@@ -15,103 +13,139 @@ class GraphDataProcessor:
 
     def __init__(self):
         print("CORE: Đang tải model Sentence-BERT...")
-        # TODO: Khởi tạo SentenceTransformer với mô hình đã chọn ('paraphrase-multilingual-MiniLM-L12-v2').
-        self.text_encoder = None
-
-    def _create_node_features(self, G, node_list, ntype):
-        """
-        (Hàm nội bộ) Tạo ma trận đặc trưng cho một danh sách node cùng loại.
-        """
-        # TODO: Khởi tạo danh sách chứa các chuỗi văn bản (features) và năm sinh (nếu là 'person').
-        feature_text_list = []
-        years = []
-        MIN_YEAR, MAX_YEAR = 1900, 2025  # Cấu hình chuẩn hóa năm sinh
-
-        # TODO: Lặp qua node_list để thu thập thuộc tính.
-        for node_id in node_list:
-            node_data = G.nodes[node_id]
-
-            # TODO: Trích xuất các thuộc tính văn bản (name, description, interests, birthplace, country).
-            # TODO: Ghép các thuộc tính văn bản thành một chuỗi `full_text` duy nhất.
-            # TODO: Thêm `full_text` vào `feature_text_list`.
-
-            if ntype == 'person':
-                # TODO: Lấy và chuyển đổi 'birthYear' thành số float, dùng try-except và gán giá trị mặc định.
-                # TODO: Kẹp giá trị năm sinh giữa MIN_YEAR và MAX_YEAR.
-                # TODO: Chuẩn hóa năm sinh về [0, 1] và thêm vào `years`.
-                pass  # Logic xử lý năm sinh
-
-        # TODO: Dùng self.text_encoder để encode `feature_text_list` thành tensor embedding.
-        embeddings = None
-        text_tensor = None
-
-        if ntype == 'person':
-            # TODO: Chuyển `years` thành tensor float, reshape thành cột (view(-1, 1)).
-            # TODO: Nối (concatenate) `text_tensor` và `year_tensor` theo chiều ngang (dim=1) và trả về.
-            return None
+        if torch.cuda.is_available():
+            print("GPU FOUNDED! PREPARING ON GPU")
+            self.device = 'cuda'
         else:
-            # TODO: Trả về `text_tensor`.
-            return None
+            print("GPU NOT FOUND! PREPARING ON CPU")
+            self.device = 'cpu'
+        self.text_encoder = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2', device=self.device)
 
-    def process_graph_to_pyg(self, G):
+    def _create_node_features(self, df):
+        df['full_text'] = (
+                'name: ' + df['name']
+                + ', description: ' + df['description']
+                + ', country: ' + df['country']
+                + ', birthPlace: ' + df['birthPlace']
+                + ', interests: ' + df['interests']
+        )
+        embeddings = df['full_text'].tolist()
+        feature = self.text_encoder.encode(embeddings, batch_size=128, show_progress_bar=True, device= self.device)
+        _max_year = 2025
+        _min_year = 1800
+
+        years = df['birthYear']
+
+        years_norm = (years - _min_year) / (_max_year - _min_year)
+
+        years_vec = years_norm.values.reshape(-1, 1)
+
+        features = np.concat([feature, years_vec], axis=1)
+
+        return torch.from_numpy(features).float()
+
+    def sanitize_hetero_data(self,data):
+        """Xóa các loại cạnh rỗng để tránh lỗi khi chạy Loader."""
+        print("Đang dọn dẹp các loại cạnh rỗng...")
+        edge_types_to_delete = []
+        for edge_type in data.edge_types:
+            if 'edge_index' not in data[edge_type] or data[edge_type].edge_index is None:
+                edge_types_to_delete.append(edge_type)
+            elif data[edge_type].edge_index.numel() == 0:
+                edge_types_to_delete.append(edge_type)
+
+        for et in edge_types_to_delete:
+            del data[et]
+        return data
+
+    import torch
+    import numpy as np
+    import pandas as pd
+    from torch_geometric.data import HeteroData
+    from torch_geometric.transforms import ToUndirected
+
+    def process_graph_to_pyg(self, df_edges, df_nodes):
         """
-        Input: NetworkX Graph
-        Output: (HeteroData, node_mapping, rev_node_mapping)
+        Chuyển đổi DataFrame sang HeteroData object (Phiên bản tối ưu khi có sẵn Type).
+
+        Args:
+            df_edges (pd.DataFrame): ['person', ..., 'src_type', 'dst_type']
+            df_nodes (pd.DataFrame): ['id', ..., 'type', 'pyg_id']
+
+        Returns:
+            HeteroData: Đồ thị dị thể PyG.
         """
-        print("CORE: Bắt đầu chuyển đổi đồ thị sang HeteroData...")
-        # TODO: Khởi tạo đối tượng PyG HeteroData.
-        data = None
+        print("CORE: Bắt đầu chuyển đổi đồ thị sang HeteroData (Pre-typed)...")
+        pyg_data = HeteroData()
 
-        ## 1. Xử lý Nodes & Features
+        # ---------------------------------------------------------
+        # 0. Chuẩn bị Mappings
+        # ---------------------------------------------------------
+        # Chỉ cần map ID -> PyG ID. Không cần map Type nữa.
+        id_to_pygid_map = dict(zip(df_nodes['id'], df_nodes['pyg_id']))
 
-        # TODO: Khởi tạo defaultdict để nhóm node ID theo 'type'.
-        # TODO: Lặp qua G.nodes, lấy 'type' và thêm node ID vào `node_by_type`.
-        # TODO: Khởi tạo node_mapping (String ID -> Int Index) và rev_node_mapping (Int Index -> String ID).
-        node_mapping = {}
-        rev_node_mapping = {}
+        # ---------------------------------------------------------
+        # 1. Xử lý Nodes & Features (Giữ nguyên)
+        # ---------------------------------------------------------
+        print("CORE: Xử lý Node")
+        grouped_nodes = df_nodes.groupby('type')
 
-        # TODO: Lặp qua từng loại node trong `node_by_type`.
-        for ntype, node_list in node_by_type.items():
-            # TODO: Tạo mapping/rev_mapping cho loại node hiện tại.
-            # TODO: Gọi self._create_node_features để tạo đặc trưng `data[ntype].x`.
-            # TODO: Gán số lượng node `data[ntype].num_nodes`.
-            pass  # Logic xử lý node
+        for ntype, group in grouped_nodes:
+            # Tạo features cho từng loại node
+            node_features = self._create_node_features(group)
 
-        ## 2. Xử lý Edges
+            pyg_data[ntype].x = node_features
+            pyg_data[ntype].num_nodes = len(group)
+            print(f"LOG: Xong loại '{ntype}': {len(group)} nodes.")
 
-        # TODO: Khởi tạo defaultdict để lưu chỉ mục cạnh theo meta-path ((src_type, rel, dst_type) -> [[src_indices], [dst_indices]]).
-        edges_dict = defaultdict(lambda: [[], []])
-        # TODO: Khởi tạo danh sách chỉ mục cho quan hệ 'person'->'knows'->'person' (hai chiều).
-        knows_src = []
-        knows_dst = []
+        # ---------------------------------------------------------
+        # 2. Xử lý Edges (Đã tối ưu hóa)
+        # ---------------------------------------------------------
+        print("CORE: Xử lý cạnh")
 
-        # TODO: Lặp qua G.edges(data=True) với tqdm.
-        for u, v, attr in tqdm(G.edges(data=True)):
-            # TODO: Lấy loại node của nguồn (u) và đích (v) từ G.nodes.
-            # TODO: Bỏ qua nếu loại node không xác định.
-            # TODO: Lấy nhãn quan hệ, mặc định là 'related_to'.
+        # Map ID gốc sang PyG ID (local index) trực tiếp trên df_edges
+        # Lưu ý: Ta dùng .map() để thay thế ID string bằng index int
+        df_edges['src_idx'] = df_edges['person'].map(id_to_pygid_map)
+        df_edges['dst_idx'] = df_edges['object'].map(id_to_pygid_map)
 
-            # TODO: Ánh xạ u, v String ID sang u_idx, v_idx Int Index bằng `node_mapping`.
-            # TODO: Tạo `edge_key` (src_type, rel_label, dst_type).
-            # TODO: Thêm u_idx, v_idx vào `edges_dict` tương ứng.
+        # Data Integrity: Loại bỏ các cạnh chứa node không tồn tại trong df_nodes
+        # (Ví dụ: Node bị lọc bỏ ở bước trước hoặc dữ liệu edges lỗi)
+        initial_count = len(df_edges)
+        valid_edges = df_edges.dropna(subset=['src_idx', 'dst_idx'])
 
-            # TODO: Nếu là 'person' -> 'person', thêm u_idx, v_idx vào `knows_src/dst`.
-            pass  # Logic xử lý edge
+        dropped_count = initial_count - len(valid_edges)
+        if dropped_count > 0:
+            print(f"WARN: Đã loại bỏ {dropped_count} cạnh 'treo' (dangling edges).")
 
-        # TODO: Lặp qua `edges_dict` để tạo và gán `edge_index` cho PyG HeteroData.
-        for (src_t, rel, dst_t), (src_list, dst_list) in edges_dict.items():
-            # TODO: Tạo tensor `edge_index` cho cạnh thuận.
-            # TODO: Gán `data[src_t, rel, dst_t].edge_index`.
-            # TODO: Tạo cạnh ngược bằng cách đảo (flip) `edge_index` và gán `data[dst_t, f"rev_{rel}", src_t].edge_index`.
-            pass  # Logic gán edge_index
+        # Group trực tiếp dựa trên cột type có sẵn
+        # Group key: (Loại nguồn, Quan hệ, Loại đích)
+        grouped_edges = valid_edges.groupby(['personType', 'relationshipLabel', 'objectType'])
 
-        # TODO: Xử lý đặc biệt quan hệ 'knows' (person-person, hai chiều).
-        if knows_src:
-            # TODO: Tạo tensor cạnh thuận và nghịch cho 'knows'.
-            # TODO: Nối (concatenate) hai tensor để tạo `final_edge_index`.
-            # TODO: Gán `data['person', 'knows', 'person'].edge_index = final_edge_index`.
-            pass  # Logic xử lý knows
+        for (src_type, rel_label, dst_type), group in grouped_edges:
+            edge_type = (str(src_type), str(rel_label), str(dst_type))
 
-        print("CORE: Chuyển đổi hoàn tất.")
-        # TODO: Trả về data (HeteroData) và tuple mappings.
-        return None
+            # Lấy indices (đã chắc chắn là số nguyên do dropna)
+            src = group['src_idx'].values.astype(np.int64)
+            dst = group['dst_idx'].values.astype(np.int64)
+
+            # Chuyển sang Tensor
+            edge_index = torch.stack([
+                torch.from_numpy(src),
+                torch.from_numpy(dst)
+            ], dim=0)
+
+            # Loại bỏ trùng lặp
+            edge_index = torch.unique(edge_index, dim=1)
+
+            # Gán vào HeteroData
+            pyg_data[edge_type].edge_index = edge_index
+
+            print(f"LOG: Đã thêm {edge_index.size(1)} cạnh loại: {edge_type}")
+
+        # ---------------------------------------------------------
+        # 3. Post-processing
+        # ---------------------------------------------------------
+        pyg_data = ToUndirected(merge=False)(pyg_data)
+        pyg_data = self.sanitize_hetero_data(pyg_data)
+
+        return pyg_data
