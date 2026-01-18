@@ -11,37 +11,6 @@ class PathFinder:
         """
         self.graph = graph
         self.weights = self._precompute_weights()
-    # def _precompute_weights(self):
-    #     """
-    #     Tính trọng số cho toàn bộ cạnh dựa trên Logic:
-    #     - Blacklist (tôn giáo, chính trị...): Trọng số Vô Cực (chặn đường).
-    #     - Social Weight: log(target_degree + 1). Node càng nổi tiếng càng khó đi qua (tránh hub).
-    #     """
-    #     # Danh sách đen: Các quan hệ không dùng để tìm đường xã hội
-    #     blacklist = {'religion', 'political_ideology', 'country_of_citizenship'}
-    #
-    #     # Lấy dữ liệu dạng List (nhanh hơn truy cập từng cạnh)
-    #     rels = self.graph.es['relationshipLabel']
-    #     targets = [e.target for e in self.graph.es]
-    #
-    #     # Lấy bậc vào (in-degree) của tất cả node
-    #     degrees = self.graph.degree(mode='in')
-    #
-    #     weights = []
-    #     for i, rel in enumerate(rels):
-    #         if rel in blacklist:
-    #             # Chặn đường bằng trọng số vô cực
-    #             weights.append(float('inf'))
-    #         else:
-    #             # Logic: log(degree + 1)
-    #             target_deg = degrees[targets[i]]
-    #             weights.append(math.log(target_deg + 1))
-    #
-    #             # Hoặc Logic đơn giản: Trọng số = 1 (Đường ngắn nhất theo số bước nhảy)
-    #             # Tùy bạn chọn. Logic log(degree) giúp tránh đi qua Hub quá lớn.
-    #              #weights.append(1.0)
-    #
-    #     return weights
 
     def _precompute_weights(self):
         """

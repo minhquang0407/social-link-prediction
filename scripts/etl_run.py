@@ -4,7 +4,7 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(PROJECT_DIR))
 
-from config import GRAPH_PATH, RAW_DIR, QueryTemplates
+from config.settings import GRAPH_PATH, RAW_JSON_DIR
 from infrastructure.pipelines import GraphTransformer, WikidataExtractor
 from infrastructure.repositories import PickleGraphRepository
 
@@ -17,11 +17,11 @@ def run_etl_pipeline():
         return
     transformer = GraphTransformer()
     files_config = [
-        (str(RAW_DIR / "raw_data_spouse.json"), "person", "spouse"),
+        (str(RAW_JSON_DIR / "raw_data_spouse.json"), "person", "spouse"),
         # ... các file khác
     ]
 
-    G_final = transformer.build_full_graph(files_config)
+    G_final = transformer.build_graph(files_config)
 
     repo = PickleGraphRepository(GRAPH_PATH)
 

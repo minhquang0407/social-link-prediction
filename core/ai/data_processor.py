@@ -3,6 +3,7 @@ from collections import defaultdict
 import igraph as ig
 import torch
 import numpy as np
+import pickle
 from networkx.readwrite.json_graph.adjacency import adjacency_data
 from torch_geometric.data import HeteroData
 from sentence_transformers import SentenceTransformer
@@ -11,7 +12,7 @@ import pandas as pd
 from torch_geometric.utils import sort_edge_index
 from tqdm import tqdm
 from infrastructure.repositories import PyGDataRepository
-from config.settings import PYG_DATA_PATH, ADJACENCY_PATH
+from config.settings import PYG_DATA_PATH, ADJACENCY_PATH, MIN_EDGE_COUNT, METADATA_PATH
 
 class GraphDataProcessor:
     """
@@ -30,10 +31,6 @@ class GraphDataProcessor:
         self.text_encoder = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2', device=self.device)
         self.text_encoder.max_seq_length = 384
         self.text_encoder.tokenizer.model_max_length = 384
-
-    import igraph as ig
-    import pandas as pd
-    import numpy as np
 
     def _precompute_structural_features(self, df_nodes, df_edges):
         """
@@ -162,6 +159,27 @@ class GraphDataProcessor:
             del data[et]
         return data
 
+    def sanitize_edge_types(self,data):
+        edge_types_to_drop = []
+
+        for et in data.edge_types:
+            # Lấy số lượng cạnh
+            count = data[et].edge_index.size(1)
+
+            if count < MIN_EDGE_COUNT:
+                print(f"⚠️ Dropping edge type {et}: Only {count} edges (Too few).")
+                edge_types_to_drop.append(et)
+
+        # 2. Thực hiện xóa
+        for et in edge_types_to_drop:
+            try:
+                del data[et]  # Lệnh này xóa hoàn toàn loại cạnh khỏi HeteroData
+            except KeyError:
+                pass  # Phòng hờ trường hợp cạnh đã bị xóa từ trước
+
+        return data
+
+
 
     def process_graph_to_pyg(self, df_edges, df_nodes):
         """
@@ -245,8 +263,8 @@ class GraphDataProcessor:
         print("Kiểm tra chuyển đổi:")
         print(f"Kiểm tra đỉnh: {pyg_data.num_nodes} = {len(df_nodes)} - {pyg_data.num_nodes == len(df_nodes)}")
         print(f"Kiểm tra đỉnh: {pyg_data.num_edges} = {len(df_edges)} - {pyg_data.num_edges == len(df_edges)}")
+        pyg_data = self.sanitize_edge_types(pyg_data)
         pyg_data = ToUndirected(merge=False)(pyg_data)
-        pyg_data = self.sanitize_hetero_data(pyg_data)
 
         return pyg_data, adj_store
 
@@ -255,4 +273,6 @@ class GraphDataProcessor:
         repo = PyGDataRepository(PYG_DATA_PATH, ADJACENCY_PATH)
         repo.save_data(pyg_data)
         repo.save_adjacency(adjacency)
-
+        pyg_data = self.sanitize_hetero_data(pyg_data)
+        with open('data_output/predicting/metadata.pkl', 'wb') as f:
+            pickle.dump(pyg_data.metadata(), f)

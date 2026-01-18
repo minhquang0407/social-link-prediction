@@ -3,8 +3,82 @@ import igraph
 from core.algorithms.bfs import PathFinder
 from core.interfaces import ISearchEngine
 import numpy as np
+import igraph as ig
+import numpy as np
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
+from collections import defaultdict
+from tqdm import tqdm
+import time
+import math
+import warnings
+
+# Tắt warning nếu đồ thị bị phân mảnh (không tìm thấy đường đi)
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="igraph")
+
+# ==========================================
+# 1. GLOBAL WORKER CONTEXT (Zero-Copy)
+# ==========================================
+# Các biến này sẽ được chia sẻ cho các process con mà không cần copy (trên Linux)
+global_graph = None
+global_weights = None
+global_is_human_arr = None
+
+
+def init_worker(graph_obj, weights_obj, is_human_arr):
+    """
+    Khởi tạo môi trường cho Process con.
+    Gán các object lớn vào biến toàn cục để truy cập nhanh.
+    """
+    global global_graph, global_weights, global_is_human_arr
+    global_graph = graph_obj
+    global_weights = weights_obj
+    global_is_human_arr = is_human_arr
+
+
+def process_batch_task(batch_data):
+    """
+    Xử lý một lô (batch) các cặp điểm.
+    Logic: Tìm đường (One-to-Many) -> Tính Human Count (Vectorized) -> Trả về Degree.
+    """
+    # 1. Gom nhóm theo Source Node để tối ưu Dijkstra
+    grouped = defaultdict(list)
+    for orig_idx, s, t in batch_data:
+        grouped[s].append((t, orig_idx))
+
+    results = []
+
+    # 2. Xử lý từng nhóm source
+    for start_node, targets_info in grouped.items():
+        target_nodes = [t[0] for t in targets_info]
+        original_indices = [t[1] for t in targets_info]
+
+        # Gọi C-layer của igraph (Nhanh hơn gọi từng cái)
+        paths = global_graph.get_shortest_paths(
+            v=start_node,
+            to=target_nodes,
+            weights=global_weights,
+            output="vpath",
+            mode='all'
+        )
+
+        # 3. Tính toán Vector hóa (Numpy) thay vì Loop Python
+        for path, orig_idx in zip(paths, original_indices):
+            # Nếu không có đường đi (path rỗng)
+            if not path:
+                results.append((orig_idx, 0))
+                continue
+
+            # TỐI ƯU: Truy xuất mảng Numpy bằng danh sách index (Fancy Indexing)
+            # Nhanh gấp ~50 lần so với sum(list comprehension)
+            human_count = global_is_human_arr[path].sum()
+
+            degree_val = max(0, human_count - 1)
+            results.append((orig_idx, degree_val))
+
+    return results
 class AnalysisService:
-    def __init__(self, graph, search_engine: ISearchEngine):
+    def __init__(self, graph, search_engine: ISearchEngine = None):
         """
         Service quản lý việc Phân tích.
         - graph: Đồ thị Igraph.
@@ -14,7 +88,8 @@ class AnalysisService:
         self.graph = graph
         self.path_finder = PathFinder(self.graph)
         self.search_engine = search_engine
-        self.is_human_list = np.array(graph.vs['type']) == 'human'
+        is_human_bool = np.array(graph.vs['type']) == 'human'
+        self.is_human_arr = is_human_bool.astype(np.int8)
         print("Analysis: Sẵn sàng!",flush=True)
 
     def nodes_info(self, query_name):
@@ -144,3 +219,45 @@ class AnalysisService:
             degree_val = max(0, human_count - 1)
             final_degrees.append(degree_val)
         return final_degrees
+
+    def compute_degrees(self, pairs, batch_size=2000, n_jobs=None):
+        """
+        Phiên bản tối ưu hóa chạy song song cho 100.000 cặp.
+        """
+        total_pairs = len(pairs)
+        # Gắn index để đảm bảo kết quả trả về đúng thứ tự ban đầu
+        indexed_pairs = [(i, p[0], p[1]) for i, p in enumerate(pairs)]
+
+        # Chia batch
+        batches = [
+            indexed_pairs[i: i + batch_size]
+            for i in range(0, total_pairs, batch_size)
+        ]
+
+        if n_jobs is None:
+            n_jobs = mp.cpu_count()
+
+
+        final_results = [0] * total_pairs
+
+        # Sử dụng ProcessPoolExecutor
+        with ProcessPoolExecutor(
+                max_workers=n_jobs,
+                initializer=init_worker,
+                initargs=(self.graph, None, self.is_human_arr)
+        ) as executor:
+
+            # Executor map + Tqdm progress bar
+            futures = list(tqdm(
+                executor.map(process_batch_task, batches),
+                total=len(batches),
+                desc="Tiến độ xử lý",
+                unit="batch"
+            ))
+
+            # Tổng hợp kết quả
+            for batch_res in futures:
+                for idx, degree in batch_res:
+                    final_results[idx] = degree
+
+        return np.array(final_results)
