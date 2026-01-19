@@ -343,7 +343,7 @@ class GraphTransformer:
         g.vs['label'] = df_nodes['name'].tolist()  # Tên hiển thị (Elon Musk)
         g.vs['type'] = df_nodes['type'].tolist()  # Loại (human, movie...)
         mean = int(df_nodes.loc[~df_nodes['birth_year'].isna()]['birth_year'].mean())
-        g.vs['birth_year'] = df_nodes['type'].fillna(mean).tolist()
+        g.vs['birth_year'] = df_nodes['birth_year'].fillna(mean).tolist()
         print("Hoàn tất chuyển đổi!")
 
         return g
