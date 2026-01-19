@@ -21,7 +21,7 @@ Dự án này xây dựng một hệ thống phân tích mạng xã hội của 
 *   **🔍 Tìm kiếm thông minh**: Hỗ trợ tìm kiếm mờ (Fuzzy Search) tên nhân vật nhanh chóng.
 *   **✈️ Đường đi ngắn nhất**: Minh chứng lý thuyết "Sáu bậc xa cách" (Six Degrees of Separation) với thuật toán BFS tối ưu.
 *   **🔮 AI Dự đoán**:
-    *   Sử dụng **PyTorch Geometric** với kiến trúc **GraphSAGE** và **HGT (Heterogeneous Graph Transformer)**.
+    *   Sử dụng **PyTorch Geometric** với kiến trúc **GraphSAGE**.
     *   Hỗ trợ xử lý đồ thị dị thể (Heterogeneous Graph) với nhiều loại node (Người, Tổ chức...) và edge (Vợ chồng, Đồng nghiệp, Học tại...).
 *   **📊 Dashboard Phân tích**: Thống kê quy mô đồ thị, phân phối bậc (degree distribution), và các metrics mạng lưới.
 *   **🌐 Giao diện Streamlit**: Tương tác mượt mà, trực quan hóa đồ thị với PyVis.
@@ -112,11 +112,6 @@ python main.py --train
 ```
 *Quá trình training sẽ sử dụng GPU nếu có (CUDA) và lưu model vào thư mục `data_output`.*
 
-### 3. Chạy Ứng dụng Web (Streamlit)
-
-```bash
-streamlit run main.py
-```
 ---
 
 ## 👥 Đội ngũ Thực hiện
