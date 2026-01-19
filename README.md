@@ -35,7 +35,7 @@ Dự án này xây dựng một hệ thống phân tích mạng xã hội của 
 | **Ngôn ngữ** | Python 3.9+ |
 | **Ứng dụng Web** | [Streamlit](https://streamlit.io/) |
 | **Thu thập dữ liệu** | SPARQLWrapper (Wikidata API), Pandas |
-| **Xử lý đồ thị** | Igrah |
+| **Xử lý đồ thị** | Igraph |
 | **AI/Deep Learning** | PyTorch, PyTorch Geometric (PyG) |
 | **Lưu trữ dữ liệu** | Pickle, JSON |
 
