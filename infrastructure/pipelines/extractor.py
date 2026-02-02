@@ -2,10 +2,21 @@ import sys
 import json
 import os
 import time
+<<<<<<< HEAD
+from pathlib import Path
+
+PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
+sys.path.append(str(PROJECT_DIR))
+from datetime import datetime
+from SPARQLWrapper import SPARQLWrapper, JSON
+from config.queries import ALL_QUERIES, BASE_QUERY
+from config.settings import RAW_DIR
+=======
 from datetime import datetime
 from SPARQLWrapper import SPARQLWrapper, JSON
 from config.settings import RAW_JSON_DIR
 from config.queries import BASE_QUERY, ALL_QUERIES
+>>>>>>> 9de2b1b (FINAL)
 
 # hàm ghi log
 def log_query_info(file_name, total_count, log_file="query_log.txt"):
@@ -37,7 +48,11 @@ class WikidataExtractor:
         self.sparql.setReturnFormat(JSON)
         self.sparql.setTimeout(300)
         self.current_json_head = None
+<<<<<<< HEAD
+        self.step = 2
+=======
 
+>>>>>>> 9de2b1b (FINAL)
 
     def _run_paginated_query(self, base_query: str, page_size=10000) -> list:
 
@@ -108,24 +123,40 @@ class WikidataExtractor:
 
         return all_bindings
 
+<<<<<<< HEAD
+    def _create_intervals(self,start_val, end_val) -> list:
+        intervals = []
+        current_start = start_val
+        while current_start < end_val:
+            current_end = current_start + self.step
+=======
     def _create_intervals(self,start_val, end_val, step = 5) -> list:
         intervals = []
         current_start = start_val
         while current_start < end_val:
             current_end = current_start + step
+>>>>>>> 9de2b1b (FINAL)
             if current_end > end_val:
                 current_end = end_val
             intervals.append((current_start, current_end))
             current_start = current_end
         return intervals
 
+<<<<<<< HEAD
+    def _run_interval_query(self, start, end, base_query, page_size) -> list:
+=======
     def _run_interval_query(self, start, end, base_query, page_size, step = 5 ) -> list:
+>>>>>>> 9de2b1b (FINAL)
         """
         Chạy query theo từng khoảng thời gian (Intervals).
         """
         self.current_json_head = None  # thiết lập lại json_head trước khi chạy
         all_bindings = []
+<<<<<<< HEAD
+        intervals = self._create_intervals(start, end + 1)
+=======
         intervals = self._create_intervals(start, end + 1, step)
+>>>>>>> 9de2b1b (FINAL)
 
         print(f"=========== BẮT ĐẦU CHẠY THEO KHOẢNG {start}-{end} ===========")
         start_time = datetime.now()
@@ -147,11 +178,19 @@ class WikidataExtractor:
         return all_bindings
 
 
+<<<<<<< HEAD
+    def _save_data(self, all_bindings, name, output_dir="data"):
+        # đường dẫn cho file lưu truy vấn
+        output_filename = os.path.join(output_dir, f"raw_data_{name}.json")
+        # đường dẫn cho file ghi log
+        log_file_path = os.path.join(output_dir, "query_log.txt")
+=======
     def _save_data(self, all_bindings, name):
         # đường dẫn cho file lưu truy vấn
         output_filename = os.path.join(str(RAW_JSON_DIR), f"raw_data_{name}.json")
         # đường dẫn cho file ghi log
         log_file_path = os.path.join(str(RAW_JSON_DIR), "query_log.txt")
+>>>>>>> 9de2b1b (FINAL)
 
         head_data = self.current_json_head if self.current_json_head else {"vars": []}
         final_json_output = {
@@ -168,6 +207,18 @@ class WikidataExtractor:
         except IOError as e:
             print(f"\n!!! LỖI KHI LƯU FILE: {e}", file=sys.stderr)
 
+<<<<<<< HEAD
+
+    def fetch_all_relationships(self, relationship_queries, start, end, output_dir="data"):
+        os.makedirs(output_dir, exist_ok=True)
+        for name, (snippet, page_size) in relationship_queries.items():
+
+            print(f"\n\n################ STARTING JOB: {name} ################")
+            full_query =BASE_QUERY.replace("##FIND_HOOK##", snippet) # thêm truy vấn  con
+            all_bindings = self._run_interval_query(start, end, full_query, page_size) # chạy truy vấn
+
+            self._save_data(all_bindings, name, output_dir)  # lưu kết quả
+=======
     def fetch_all_relationships(self, relationship_queries, start, end, step):
         os.makedirs(RAW_JSON_DIR, exist_ok=True)
         for name, (snippet, page_size) in relationship_queries.items():
@@ -177,6 +228,7 @@ class WikidataExtractor:
             all_bindings = self._run_interval_query(start, end, full_query, page_size, step = step) # chạy truy vấn
 
             self._save_data(all_bindings, name, RAW_JSON_DIR)  # lưu kết quả
+>>>>>>> 9de2b1b (FINAL)
 
             time.sleep(1)
 
@@ -187,4 +239,8 @@ if __name__ == "__main__":
     YOUR_USER_AGENT = "SocialLinkPredictionBot/1.0 (naqaq2005@gmail.com)"
 
     extractor = WikidataExtractor(user_agent=YOUR_USER_AGENT)
+<<<<<<< HEAD
+    extractor.fetch_all_relationships(ALL_QUERIES, 1800, 2025, str(RAW_DIR))
+=======
     extractor.fetch_all_relationships(ALL_QUERIES, 1800, 2025,1)
+>>>>>>> 9de2b1b (FINAL)

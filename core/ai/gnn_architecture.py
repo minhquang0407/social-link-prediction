@@ -1,6 +1,42 @@
 import torch
 import torch.nn.functional as F
 from torch_geometric.nn import SAGEConv, to_hetero
+<<<<<<< HEAD
+
+
+class GraphSAGE(torch.nn.Module):
+    def __init__(self,hidden_channels, out_channels):
+        super().__init__()
+        self.conv1 = SAGEConv((-1,-1),hidden_channels)
+        self.bn1 = torch.nn.BatchNorm1d(hidden_channels)
+        self.conv2 = SAGEConv((-1,-1),out_channels)
+    def forward(self,x,edge_index):
+        x = self.conv1(x,edge_index)
+        #x = self.bn1(x)
+        x = F.relu(x)
+        x = F.dropout(x, p=0.5, training=self.training)
+        x = self.conv2(x,edge_index)
+        return x
+
+    def decode(self, z_dict, edge_label_index, edge_type):
+        """
+        Tính điểm liên kết (Dot product) dựa trên vector embeddings (Z).
+        """
+        src_type, _, dst_type = edge_type
+
+        # Lấy vector Z của node nguồn và node đích
+        z_src = z_dict[src_type][edge_label_index[0]]
+        z_dst = z_dict[dst_type][edge_label_index[1]]
+
+        # Dot product (nhân tích vô hướng)
+        return (z_src * z_dst).sum(dim=-1)
+=======
+from config.settings import PYG_DATA_PATH
+from infrastructure.repositories import PyGDataRepository
+feature = PyGDataRepository(PYG_DATA_PATH)
+import torch
+import torch.nn.functional as F
+from torch_geometric.nn import SAGEConv, to_hetero
 from config.settings import PYG_DATA_PATH
 from infrastructure.repositories import PyGDataRepository
 feature = PyGDataRepository(PYG_DATA_PATH)
@@ -51,18 +87,18 @@ class InteractionMLP(torch.nn.Module):
         # Ép về 1 chiều để tránh lỗi shape [N, 1] vs [N]
         return h.view(-1)
 class LinkPredictionModel(torch.nn.Module):
-    def __init__(self, hidden_channels, out_channels, data=None,metadata=None, dropout=0.5):
+    def __init__(self, hidden_channels, out_channels, data=None,metadata=None):
         super().__init__()
-        if data is not None:
-            self.metadata = data.metadata()
-        elif metadata is not None:
-            self.metadata = metadata
+        if metadata is None:
+            if data is not None:
+                self.metadata = data.metadata()
+            else:
+                raise ValueError("Bắt buộc phải truyền 'data' hoặc 'metadata' để khởi tạo Model!")
         else:
-            raise ValueError("Phải cung cấp 'data' (lúc train) hoặc 'metadata' (lúc deploy)!")
-
+            self.metadata = metadata
         node_types, edge_types = self.metadata
-        self.gnn = GraphSAGE(hidden_channels, out_channels, dropout)
-        self.encoder = to_hetero(self.gnn, metadata, aggr='sum')
+        self.gnn = GraphSAGE(hidden_channels, out_channels, 0.4)
+        self.encoder = to_hetero(self.gnn, self.metadata, aggr='sum')
 
         self.decoders = torch.nn.ModuleDict()
 
@@ -72,7 +108,7 @@ class LinkPredictionModel(torch.nn.Module):
             if rel.startswith('rev_'): continue
 
             key = f"__{rel}__"
-            self.decoders[key] = InteractionMLP(out_channels, 64, 1, dropout)
+            self.decoders[key] = InteractionMLP(out_channels, 64, 1, 0.4)
 
     def forward(self, x, edge_index, target_edge_type, edge_label_index):
         z_dict = self.encoder(x, edge_index)
@@ -88,3 +124,4 @@ class LinkPredictionModel(torch.nn.Module):
             return self.decoders[key](z_src, z_dst)
         else:
             return torch.zeros(z_src.size(0), device=z_src.device)
+>>>>>>> 9de2b1b (FINAL)

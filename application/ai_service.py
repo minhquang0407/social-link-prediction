@@ -1,18 +1,79 @@
 import torch
 import pickle
 from core.ai import Predictor
+<<<<<<< HEAD
+
+
+class AIService:
+    def __init__(self, G_full, model, data, mapping):
+        self.G_full = G_full
+        self.model = model
+        self.data = data
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.node_mapping, self.rev_node_mapping = mapping
+        self.predictor = Predictor()
+
+        print("AI: Đang tính toán sẵn các vector (Caching)...")
+        self.all_person_vectors = self.predictor.compute_all_embeddings(
+            self.model, self.data, self.device
+        )
+        print("AI: Sẵn sàng!")
+
+    def predict_top_partners(self, person_id, top_k=5):
+        """
+        Dự đoán Top đối tác tiềm năng.
+        """
+        # 1. Lấy Index từ ID
+        if person_id not in self.node_mapping['person']:
+            return []
+        p_idx = self.node_mapping['person'][person_id]
+
+        # 2. Lấy Vector của người đó (từ Cache)
+        z_A = self.all_person_vectors[p_idx]
+
+        # 3. Gọi Predictor để tính toán Toán học
+        top_scores, top_indices = self.predictor.predict_top_k_similar(
+            z_A, self.all_person_vectors, top_k
+        )
+
+        # 4. Mapping ngược: Index -> Tên
+        results = []
+        for score, index in zip(top_scores, top_indices):
+            idx = index.item()
+            if idx == p_idx: continue
+
+            real_id = self.rev_node_mapping['person'][idx]
+            name = self.G_full.nodes[real_id].get('name', 'Unknown')
+
+            results.append((name, score.item()))
+
+        return results[:top_k]
+
+    def predict_link_score(self, id_a, id_b):
+        """Dự đoán điểm giữa 2 người cụ thể"""
+        try:
+            idx_a = self.node_mapping['person'][id_a]
+            idx_b = self.node_mapping['person'][id_b]
+
+            vec_a = self.all_person_vectors[idx_a]
+            vec_b = self.all_person_vectors[idx_b]
+
+            return self.predictor.predict_link_score(vec_a, vec_b)
+        except KeyError:
+            return 0.0
+=======
 import pandas as pd
 from config.settings import NODES_DATA_PATH
 from core.interfaces import ISearchEngine
 class AIService:
-    def __init__(self,  model, metadata, embeddings, engine:ISearchEngine, device = 'cuda'):
+    def __init__(self,  model, embeddings, engine, predictor):
         self.model = model
         self.embeddings = embeddings
-        self.metadata = metadata
+        self.metadata = predictor.metadata
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print("AI: Đang khởi tạo bộ máy dự đoán!",flush=True)
         self.search_engine = engine
-        self.predictor = Predictor(model,metadata, embeddings)
+        self.predictor = predictor
         with open(f'data_output/predicting/adjacency.pkl', 'rb') as f:
             self.adj = pickle.load(f)
         print("AI: Sẵn sàng!",flush=True)
@@ -104,7 +165,6 @@ class AIService:
 
         valid_spouses = []
         # Lấy thông tin năm sinh của nguồn (cần lookup dict lưu bên ngoài)
-        # Giả sử bạn có self.node_metadata['human'][id] = {'birthYear': 1990}
         src_meta = self.search_engine.search_backward_pyg('human', src_id)
         src_sex = src_meta.get('sex_or_gender')
         src_year = src_meta.get('birth_year')
@@ -147,22 +207,46 @@ class AIService:
         for item in valid_spouses:
             print(f"{item['name']} ({item['birth_year']}/{item['sex']}) - Score: {item['score']:.4f}")
 
-
     def has_edge(self, src_idx, dst_idx, src_type, rel, dst_type):
-        """Kiểm tra cạnh tồn tại (Input là số nguyên)"""
-        key = f"{src_type}__{rel}__{dst_type}"
+        """
+        Kiểm tra cạnh với logic "Double Check" cho quan hệ đối xứng.
+        """
+        key = (src_type, rel, dst_type)
         if key not in self.adj: return False
-        return (src_idx, dst_idx) in self.adj[key] or (dst_idx, src_idx) in self.adj[key]
+
+        matrix = self.adj[key]
+        rows, cols = matrix.shape
+
+        # --- LẦN 1: Check đúng thứ tự người dùng truyền vào (A -> B) ---
+        if src_idx < rows and dst_idx < cols:
+            if matrix[src_idx, dst_idx]:
+                return True
+
+        # --- LẦN 2: Đảo ngược vị trí để check lại (B -> A) ---
+        # Chỉ thực hiện nếu 2 node CÙNG LOẠI (VD: Human-Human)
+        # Vì Human-Org mà đảo ngược thì sai về mặt logic và crash ma trận
+        if src_type == dst_type:
+            # Lúc này dst_idx đóng vai trò là Hàng (Row), src_idx là Cột (Col)
+            if dst_idx < rows and src_idx < cols:
+                if matrix[dst_idx, src_idx]:
+                    return True
+
+        return False
 
     def check_existing_connection(self, id_a, id_b, taboo_rels):
-        """
-        Kiểm tra nhanh xem giữa A và B đã có cạnh nào trong danh sách cấm chưa.
-        """
-        # Đây là code giả định, bạn cần implement dựa trên data thực tế
-        # Check xuôi: A -> taboo -> B
+        """Check nhanh taboo"""
         for rel in taboo_rels:
-            if self.has_edge(id_a, id_b, 'human', rel, 'human'):
-                return True
-            if self.has_edge(id_b, id_a, 'human', rel, 'human'):
-                return True
+            # Check A -> B
+            key_fwd = ('human', rel, 'human')
+            if key_fwd in self.adj:
+                if self.adj[key_fwd][id_a, id_b]: return True
+
+            # Check B -> A (Quan trọng cho quan hệ 2 chiều)
+            # Vì sparse matrix là có hướng, nên phải check ngược lại bằng key rev hoặc check index ngược
+            # Nếu data của bạn có cạnh 'rev_', check key đó sẽ an toàn hơn.
+            # Hoặc đơn giản:
+            if key_fwd in self.adj and id_b < self.adj[key_fwd].shape[0] and id_a < self.adj[key_fwd].shape[1]:
+                if self.adj[key_fwd][id_b, id_a]: return True
+
         return False
+>>>>>>> 9de2b1b (FINAL)

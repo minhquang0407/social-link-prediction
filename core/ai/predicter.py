@@ -1,4 +1,59 @@
+<<<<<<< HEAD
+import torch
+from core.interfaces import ILinkPredictor
+from torch_geometric.loader import NeighborLoader
+from tqdm import tqdm
+
+class Predictor(ILinkPredictor):
+
+    def compute_all_embeddings(self, model, data, device, batch_size = 128):
+        """
+        Chạy model 1 lần để lấy vector của TẤT CẢ các node.
+        Hàm này dùng để cache vector Z.
+        """
+        model.eval()
+
+        loader = NeighborLoader(
+            data,
+            num_neighbors=[10, 5],
+            input_nodes=('person', None),
+            batch_size=batch_size,
+            shuffle=False
+        )
+
+        all_embeddings = []
+
+        with torch.no_grad():
+            for batch in tqdm(loader, desc="Computing Embeddings"):
+                batch = batch.to(device)
+                z_dict = model(batch.x_dict, batch.edge_index_dict)
+                batch_size_actual = batch['person'].batch_size
+                z_person_batch = z_dict['person'][:batch_size_actual]
+                all_embeddings.append(z_person_batch.cpu())
+
+        z_all_person = torch.cat(all_embeddings, dim=0)
+
+        return z_all_person
+
+    def predict_top_k_similar(self, target_vec,all_vectors, top_k=5):
+        if target_vec.device != all_vectors.device:
+            target_vec = target_vec.to(all_vectors.device)
+        scores = torch.matmul(all_vectors, target_vec)
+
+        top_scores, top_indices = torch.topk(scores, k=top_k + 1)
+
+
+        return top_scores, top_indices
+
+    def predict_link_score(self, vec_a, vec_b) -> float:
+        if not isinstance(vec_a, torch.Tensor): vec_a = torch.tensor(vec_a)
+        if not isinstance(vec_b, torch.Tensor): vec_b = torch.tensor(vec_b)
+        score = (vec_a * vec_b).sum().item()
+        prob = torch.sigmoid(torch.tensor(score)).item()
+        return prob
+=======
 import os
+import torch.nn.functional as F
 
 import torch
 import torch.amp
@@ -10,53 +65,85 @@ from core.interfaces import ILinkPredictor
 
 
 class Predictor(ILinkPredictor):
-    def __init__(self, model, data = None,  metadata = None, embeddings=None):
+    def __init__(self, model, data=None, metadata=None, embeddings=None):
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.model = model
+
+        # Xử lý metadata
         if data is not None:
             self.data = data
             self.metadata = data.metadata()
         elif metadata is not None:
             self.metadata = metadata
+
         self.model.eval()
         self.model.to(self.device)
 
-        if embeddings is None and data is not None:
-            if os.path.exists(str(PREDICT_DATA_PATH)):
-                self.embeddings = torch.load(str(PREDICT_DATA_PATH))
-            else:
-                self.embeddings = self._compute_all_embeddings()
-        else:
+        if embeddings is not None:
             self.embeddings = embeddings
+        else:
+            if os.path.exists(str(PREDICT_DATA_PATH)):
+                print(f"Found saved embeddings at {PREDICT_DATA_PATH}. Loading...")
+                self.embeddings = torch.load(str(PREDICT_DATA_PATH), map_location='cpu')
+            elif data is not None:
+                print("No saved embeddings found. Computing fresh ones...")
+                self.embeddings = self._compute_all_embeddings()
+            else:
+                raise ValueError("Predictor needs either 'embeddings', 'data', or a saved file to work!")
+
+        # --- TÍNH DEGREE ĐỂ PHẠT HUBS ---
+        if data is not None:
+            self.node_degrees = self._compute_node_degrees(data)
+        else:
+            self.node_degrees = {}
 
         self.connectivity_map = self._build_connectivity_map()
         self.BIOLOGICAL_RELS = {
-            'spouse', 'sibling', 'father', 'mother', 'child',
-            'student_of'
+            'spouse', 'sibling', 'father', 'mother', 'child', 'student_of'
         }
         self.HUMAN_SRC_ONLY = {
             'educated_at', 'student_of'
         }
-    @torch.no_grad()
-    def _compute_all_embeddings(self, batch_size=512):
-        """Tính và trả về Embeddings (Không lưu attribute để tránh side-effect)"""
-        if self.data is None:
-            repo = PyGDataRepository(PYG_DATA_PATH)
-            data = repo.load_data()
-        else: data = self.data
-        embeddings = {}
 
+    def _compute_node_degrees(self, data):
+        """Tính bậc (degree) cho tất cả các node để dùng cho Penalty"""
+        print("Computing Node Degrees for Hub Penalty...")
+        degrees_map = {}
+        for node_type in data.node_types:
+            num_nodes = data[node_type].num_nodes
+            if num_nodes == 0: continue
+
+            # Khởi tạo vector 0
+            d = torch.zeros(num_nodes, dtype=torch.float)
+
+            # Duyệt qua các cạnh hướng VÀO node_type này
+            for src, rel, dst in data.edge_types:
+                if dst == node_type:
+                    edge_index = data[(src, rel, dst)].edge_index
+                    # Đếm tần suất xuất hiện của dst_index
+                    # bincount cực nhanh trên CPU/GPU
+                    dst_indices = edge_index[1].cpu()
+                    d += torch.bincount(dst_indices, minlength=num_nodes).float()
+
+            degrees_map[node_type] = d
+        return degrees_map
+    @torch.no_grad()
+    def _compute_all_embeddings(self, batch_size=1024):
+        """Tính và trả về Embeddings (Không lưu attribute để tránh side-effect)"""
+        repo = PyGDataRepository(PYG_DATA_PATH)
+        data = repo.load_data()
+        embeddings = {}
+        self.model.eval()
         print(f"🚀 Computing Embeddings on {self.device}...")
 
         for node_type in data.node_types:
             if data[node_type].num_nodes == 0: continue
-
             loader = NeighborLoader(
                 data,
-                num_neighbors=[20, 10],
+                num_neighbors=[50, 30],
                 input_nodes=node_type,
                 shuffle=False,
-                num_workers=0,
+                num_workers=2,
                 batch_size=batch_size
             )
 
@@ -72,9 +159,10 @@ class Predictor(ILinkPredictor):
                         all_embs.append(z_dict[node_type][:bs].cpu())
 
             if all_embs:
-                embeddings[node_type] = torch.cat(all_embs, dim=0)
+                raw_emb = torch.cat(all_embs, dim=0)
+                final_emb = F.normalize(raw_emb, p=2, dim=1)
+                embeddings[node_type] = final_emb
 
-        # Save 1 lần sau khi xong hết
         torch.save(embeddings, str(PREDICT_DATA_PATH))
         return embeddings
 
@@ -114,8 +202,6 @@ class Predictor(ILinkPredictor):
                 rel_name = key.strip('_')
                 if '__' in key.strip('_'): rel_name = key.split('__')[1]
                 candidate_rels.add(rel_name)
-
-
 
         # 2. Duyệt và Dự đoán
         for rel in candidate_rels:
@@ -223,22 +309,25 @@ class Predictor(ILinkPredictor):
                     with torch.amp.autocast('cuda'):
                         logits = decoder(batch_src, batch_dst)
                         scores = torch.sigmoid(logits).view(-1).cpu()
-
+                        if hasattr(self, 'node_degrees') and target_type in self.node_degrees:
+                            batch_indices = range(i, i + len(scores))
+                            # Lấy degree an toàn (tránh lỗi index out of bound)
+                            if batch_indices[-1] < len(self.node_degrees[target_type]):
+                                batch_degrees = self.node_degrees[target_type][batch_indices]
+                                penalty = torch.log(batch_degrees + 1) + 1
+                                scores = scores / penalty
                     # Cập nhật Max Score
                     current_slice = slice(i, i + len(scores))
                     mask = scores > best_scores[current_slice]
                     best_scores[current_slice] = torch.where(mask, scores, best_scores[current_slice])
 
-                    # Update Relation Name
                     indices = torch.nonzero(mask).flatten() + i
                     for idx in indices:
                         best_rels[idx.item()] = r_name
 
-            # Self-loop check
             if src_type == target_type:
                 best_scores[src_id] = -1.0
 
-            # Local Top-K
             k_local = min(top_k, num_candidates)
             vals, indices = torch.topk(best_scores, k=k_local)
 
@@ -252,6 +341,6 @@ class Predictor(ILinkPredictor):
                         'score': val.item()
                     })
 
-        # 3. Global Sort
         global_candidates.sort(key=lambda x: x['score'], reverse=True)
         return global_candidates[:top_k]
+>>>>>>> 9de2b1b (FINAL)

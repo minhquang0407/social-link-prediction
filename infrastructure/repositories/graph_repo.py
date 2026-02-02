@@ -18,7 +18,11 @@ class PickleGraphRepository(IGraphRepository):
     def __init__(self, file_path: Path):
         self.file_path = file_path
 
+<<<<<<< HEAD
+    def save_graph(self, G: nx.Graph):
+=======
     def save_graph(self, G):
+>>>>>>> 9de2b1b (FINAL)
         """
         Lưu đồ thị NetworkX xuống đĩa.
         Tự động tạo thư mục cha nếu chưa tồn tại.
@@ -32,6 +36,10 @@ class PickleGraphRepository(IGraphRepository):
             # 2. Mở file chế độ Write Binary (wb)
             with open(self.file_path, "wb") as f:
                 pickle.dump(G, f, pickle.HIGHEST_PROTOCOL)
+<<<<<<< HEAD
+
+=======
+>>>>>>> 9de2b1b (FINAL)
             print("REPO: Lưu thành công!")
             return True
 
@@ -55,7 +63,11 @@ class PickleGraphRepository(IGraphRepository):
             with open(self.file_path, "rb") as f:
                 G = pickle.load(f)
 
+<<<<<<< HEAD
+            print(f"REPO: Tải thành công! (Nodes: {G.number_of_nodes()}, Edges: {G.number_of_edges()})")
+=======
             print(f"REPO: Tải thành công! (Nodes: {G.vcount()}, Edges: {G.ecount()})")
+>>>>>>> 9de2b1b (FINAL)
             return G
 
         except Exception as e:
