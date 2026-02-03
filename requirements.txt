@@ -17,5 +17,9 @@ python-Levenshtein
 unidecode
 SPARQLWrapper
 tqdm
+<<<<<<< HEAD
 
 igraph
+=======
+igraph
+>>>>>>> main
