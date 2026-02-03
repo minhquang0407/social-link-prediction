@@ -1,8 +1,9 @@
 import json
-import networkx as nx
+import numpy as np
 import pandas as pd
 import glob
 import os
+import re
 from unidecode import unidecode
 from config.settings import RAW_JSON_DIR, RAW_PARQUET_PATH, EDGES_DATA_PATH,NODES_DATA_PATH, GRAPH_PATH
 from infrastructure.repositories import PickleGraphRepository
@@ -12,8 +13,8 @@ class GraphTransformer:
         # Khởi tạo một đồ thị rỗng
         print("GraphTransformer initialized.")
 
-    def _ingest_json_to_parquet(self,json_folder, save = True):
-        json_files = glob.glob(os.path.join(str(RAW_JSON_DIR,), "*.json"))
+    def _ingest_json_to_parquet(self,json_folder = RAW_JSON_DIR , save = True):
+        json_files = glob.glob(os.path.join(str(json_folder,), "*.json"))
 
         dfs = []
         for file_path in json_files:
@@ -112,6 +113,25 @@ class GraphTransformer:
             print(f"❌ Lỗi khi đọc file {raw_filepath}: {e}")
             return pd.DataFrame()
 
+    def _remove_back_edges_stay_columns(self, df):
+        # Trích xuất mảng để tính toán tốc độ cao
+        p1 = df['person'].values
+        p2 = df['object'].values
+        rel = df['relationshipLabel'].values
+
+        # Sắp xếp vector: luôn giữ (nhỏ, lớn)
+        node_min = np.where(p1 < p2, p1, p2)
+        node_max = np.where(p1 < p2, p2, p1)
+
+        # Tạo DataFrame tạm thời để tận dụng hàm duplicated cực nhanh của Pandas
+        temp_df = pd.DataFrame({
+            'n1': node_min,
+            'n2': node_max,
+            'rel': rel
+        }, index=df.index)  # Quan trọng: Giữ nguyên Index của df gốc
+
+        mask = ~temp_df.duplicated(keep='first')
+        return df.loc[mask]
     def _get_object_info(self, df):
         file_path = 'data_output/raw/raw_data_object.parquet'
         df_temp = pd.read_parquet(file_path, engine='pyarrow')
@@ -123,6 +143,7 @@ class GraphTransformer:
         df_final = pd.merge(df, df_temp, on = 'id', how = 'left')
         return df_final
     def _create_nodes_data(self,df: pd.DataFrame):
+
         # 1. Chuẩn bị Person
         cols_p_map = {
             'person': 'id', 'personLabel': 'name', 'personDescription': 'description',
@@ -147,11 +168,7 @@ class GraphTransformer:
 
         # 3. Data final
         df_nodes = pd.concat([df_person, df_object], ignore_index=True)
-
-        mean_val = int(round(df_nodes['birthYear'].mean()))
-        df_nodes['birthYear'] = df_nodes['birthYear'].fillna(mean_val).astype('Int64')
-        df_nodes.fillna('', inplace=True)
-
+        df_nodes['birthYear'] = pd.to_numeric(df_nodes['birthYear'], errors='coerce').astype('Int64')
         df_nodes.drop_duplicates('id', inplace=True, ignore_index=True, keep='first')
         df_nodes['pyg_id'] = df_nodes.groupby('type').cumcount()
         return df_nodes
@@ -172,124 +189,165 @@ class GraphTransformer:
             valid_cols = list(new_columns.values())
             df = df[valid_cols]
 
-        df_country = df.groupby('person')['countryLabel'].apply(lambda x: ', '.join(x.fillna('').astype(str).unique())).reset_index()
-        df = df.drop(columns= 'countryLabel')
-        df = pd.merge(df,df_country, on='person',how = 'left')
+        def join_unique(x):
+            return ', '.join(x.fillna(' ').astype(str).unique())
 
+        cols_to_group = ['countryLabel', 'birthPlaceLabel', 'birthYear']
+
+        df_aggregated = df.groupby('person')[cols_to_group].agg(join_unique).reset_index()
+
+        df = df.drop(columns=cols_to_group)
+        df = pd.merge(df, df_aggregated, on='person', how='left')
+        df[['countryLabel', 'birthPlaceLabel', 'birthYear']] = df[['countryLabel', 'birthPlaceLabel', 'birthYear']].replace('', None)
 
         num_col_isnull = df.isnull().sum()
         print(f"Thống kê cột có dữ liệu bị thiếu:\n{num_col_isnull}",flush=True)
         num_row_isnull = df.isnull().any(axis=1).sum()
         print(f"Tổng số dòng có dữ liệu bị thiếu: {num_row_isnull}",flush=True)
         for col in df.columns:
-            df[col] = df[col].fillna("").astype(str).str.strip().str.replace(r'[\r\n\t]+', ' ', regex=True)
+            df[col] = df[col].astype(str).str.strip().str.replace(r'[\r\n\t]+', ' ', regex=True)
 
-        df['birthYear'] = pd.to_numeric(df['birthYear'], errors='coerce').astype('Int64')
-        mean_val = df['birthYear'].mean()
-        df['birthYear'] = df['birthYear'].fillna(mean_val)
         # Làm sạch ID (bỏ http://.../Q123 -> Q123)
         for col in ['person', 'object']:
             if col in df.columns:
                 df[col] = df[col].astype(str).str.split('/').str[-1]
 
-        # Lọc các dòng mà có name bắt đầu bằng Q...
-        qid_pattern = r'^Q\d+$'
-        total_dropped = 0
+        # Rác của ID
+        print(len(df))
 
-        if 'personLabel' in df.columns:
-            mask_invalid = df['personLabel'].astype(str).str.match(qid_pattern, na=False)
-            count_invalid = mask_invalid.sum()
-            if count_invalid > 0:
-                df = df[~mask_invalid]
-                total_dropped += count_invalid
+        # Rác của Label: Bắt đầu bằng Q (chưa giải mã) HOẶC là link genid
+        pattern = r'^Q\d+$'
 
-        if 'objectLabel' in df.columns:
-            mask_invalid = df['objectLabel'].astype(str).str.match(qid_pattern, na=False)
-            count_invalid = mask_invalid.sum()
-            if count_invalid > 0:
-                df = df[~mask_invalid]
-                total_dropped += count_invalid
+        # Tìm dòng mà ID bắt đầu bằng Q
+        mask_id = df[['person', 'object']].apply(
+            lambda col: col.astype(str).str.match(pattern, na=False)
+        ).all(axis=1)
 
-        print(f"Số dòng bị bỏ (Name lỗi): {total_dropped}", flush=True)
+        df = df[mask_id]
 
-        # Lọc dòng trống ID
+        # Tìm dòng mà Label bị dính mã Q hoặc link genid
+        mask_label = df[['personLabel', 'objectLabel']].apply(
+            lambda col: col.astype(str).str.match(pattern, na=False)
+        ).any(axis=1)
+
+        df = df[~mask_label]
+
+        print(f"Tổng số dòng rác đã loại bỏ: {(~mask_id).sum() + mask_label.sum()}")
+        print(len(df))
         df = df[df['person'].notna() & (df['person'] != '')]
-        # Loc cac dong bi lap
+        print(len(df))
 
+        # Loc cac dong bi lap
         df = df.drop_duplicates(subset=['person', 'relationshipLabel', 'object'], keep='first')
+        print(len(df))
+
+        print(f"Đang lọc các cạnh ngược")
+        df = self._remove_back_edges_stay_columns(df)
+        print(len(df))
+
         df_nodes = self._create_nodes_data(df)
 
         # Lay cac cot can thiet
         cols = ['person', 'personLabel','personType' , 'relationshipLabel', 'object', 'objectLabel', 'objectType']
-        df = df[cols]
+        df_edges = df[cols]
 
+        def to_snake_case(name: str) -> str:
+            """
+            Chuyển đổi chuỗi từ camelCase/PascalCase/Space-separated sang snake_case.
+            """
+            # Bước 1: Xử lý các cụm viết tắt và ký tự hoa liên tiếp
+            # Ví dụ: personSubType -> person_Sub_Type
+            s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
+
+            # Bước 2: Tách giữa ký tự thường/số và ký tự hoa
+            # Ví dụ: person_Sub_Type -> person_sub_type
+            s2 = re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+
+            # Bước 3: Thay thế khoảng trắng hoặc gạch ngang thành gạch dưới
+            return s2.replace(" ", "_").replace("-", "_")
+
+        df_edges.columns = [to_snake_case(col) for col in df_edges.columns]
+        df_nodes.columns = [to_snake_case(col) for col in df_nodes.columns]
         print("Đã làm sạch xong!")
         if save:
             os.makedirs(os.path.dirname(str(EDGES_DATA_PATH)), exist_ok=True)
             os.makedirs(os.path.dirname(str(NODES_DATA_PATH)), exist_ok=True)
-            df.to_parquet(str(EDGES_DATA_PATH), engine='pyarrow', compression='snappy')
+            df_edges.to_parquet(str(EDGES_DATA_PATH), engine='pyarrow', compression='snappy')
             df_nodes.to_parquet(str(NODES_DATA_PATH), engine='pyarrow', compression='snappy')
-        return df, df_nodes
+        return df_edges, df_nodes
 
-    def build_graph(self, df_edges, df_nodes):
+    def build_graph(self,df_edges, df_nodes):
+
         # 1. Tạo đồ thị cơ bản
-        nodes_df = df_nodes.reset_index(drop=True)
 
         # Tạo bảng mapping: Q-ID -> Index (Dùng để map cho edges)
-        # Cột 'id' trong df_nodes là Q-ID (ví dụ Q123)
-        mapping = pd.Series(nodes_df.index, index=nodes_df['id'])
 
-        print(f"   - Đã index {len(nodes_df)} nodes.")
+        # Cột 'id' trong df_nodes là Q-ID (ví dụ Q123)
+
+        mapping = pd.Series(df_nodes.index, index=df_nodes['id'])
+
+        print(f" - Đã index {len(df_nodes)} nodes.")
 
         # --- BƯỚC 2: MAP EDGES (Dùng Pandas Vectorization) ---
-        print("   - Đang mapping cạnh...")
+
+        print(" - Đang mapping cạnh...")
 
         # Cần đảm bảo src và dst có cùng độ dài sau khi dropna (inner join logic)
+
         # Cách an toàn nhất là tạo 1 df tạm để dropna đồng bộ
+
         edges_temp = pd.DataFrame({
+
             'source': df_edges['person'],
+
             'target': df_edges['object'],
-            'label': df_edges['relationshipLabel']
+
+            'label': df_edges['relationship_label']
+
         })
 
         # Map lại trên df tạm
+
         edges_temp['src_idx'] = edges_temp['source'].map(mapping)
+
         edges_temp['dst_idx'] = edges_temp['target'].map(mapping)
 
         # Loại bỏ các hàng bị NaN (do node không có trong df_nodes)
+
         valid_edges = edges_temp.dropna(subset=['src_idx', 'dst_idx'])
 
         edge_list = list(zip(valid_edges['src_idx'].astype(int), valid_edges['dst_idx'].astype(int)))
 
         # Lấy thuộc tính quan trọng của cạnh để dùng tính trọng số sau này
+
         edge_attrs = {
-            'relationshipLabel': valid_edges['label'].tolist()
+
+            'relationship_label': valid_edges['label'].tolist()
+
         }
 
-        print(f"   - Số lượng cạnh hợp lệ: {len(edge_list)}")
+        print(f" - Số lượng cạnh hợp lệ: {len(edge_list)}")
 
         # --- BƯỚC 3: TẠO IGRAPH ---
-        print("   - Đang xây dựng cấu trúc đồ thị...")
-        g = ig.Graph(n=len(nodes_df), edges=edge_list, directed=True, edge_attrs=edge_attrs)
+
+        print(" - Đang xây dựng cấu trúc đồ thị...")
+
+        g = ig.Graph(n=len(df_nodes), edges=edge_list, directed=True, edge_attrs=edge_attrs)
 
         # --- BƯỚC 4: NẠP THUỘC TÍNH NODE ---
+
         # Nạp tất cả thông tin từ df_nodes vào graph để sau này truy xuất
+
         # Lưu ý: igraph dùng thuộc tính 'name' làm định danh chuỗi (Q-ID)
-        g.vs['name'] = nodes_df['id'].tolist()  # Q-ID (Q42)
-        g.vs['label'] = nodes_df['name'].tolist()  # Tên hiển thị (Elon Musk)
-        g.vs['desc'] = nodes_df['description'].tolist()  # Mô tả
-        g.vs['type'] = nodes_df['type'].tolist()  # Loại (human, movie...)
-
-        # Các thuộc tính phụ (nếu cần hiển thị chi tiết)
-        if 'birthYear' in nodes_df.columns:
-            g.vs['birthYear'] = nodes_df['birthYear'].fillna(0).tolist()
-        if 'country' in nodes_df.columns:
-            g.vs['country'] = nodes_df['country'].fillna('').tolist()
-
-        # --- BƯỚC 5: LƯU FILE ---
-
+        g.vs['name'] = df_nodes['id'].tolist()  # Q-ID (Q42)
+        g.vs['label'] = df_nodes['name'].tolist()  # Tên hiển thị (Elon Musk)
+        g.vs['type'] = df_nodes['type'].tolist()  # Loại (human, movie...)
+        mean = int(df_nodes.loc[~df_nodes['birth_year'].isna()]['birth_year'].mean())
+        g.vs['birth_year'] = df_nodes['birth_year'].fillna(mean).tolist()
         print("Hoàn tất chuyển đổi!")
+
         return g
+
 
     def run_transformer(self, raw_dir = None, force_data = True, save = True ):
         """

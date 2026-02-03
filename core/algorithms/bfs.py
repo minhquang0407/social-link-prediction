@@ -2,6 +2,7 @@ import igraph as ig
 import pickle
 import math
 import os
+from collections import defaultdict
 
 class PathFinder:
     def __init__(self, graph):
@@ -10,37 +11,6 @@ class PathFinder:
         """
         self.graph = graph
         self.weights = self._precompute_weights()
-    # def _precompute_weights(self):
-    #     """
-    #     Tính trọng số cho toàn bộ cạnh dựa trên Logic:
-    #     - Blacklist (tôn giáo, chính trị...): Trọng số Vô Cực (chặn đường).
-    #     - Social Weight: log(target_degree + 1). Node càng nổi tiếng càng khó đi qua (tránh hub).
-    #     """
-    #     # Danh sách đen: Các quan hệ không dùng để tìm đường xã hội
-    #     blacklist = {'religion', 'political_ideology', 'country_of_citizenship'}
-    #
-    #     # Lấy dữ liệu dạng List (nhanh hơn truy cập từng cạnh)
-    #     rels = self.graph.es['relationshipLabel']
-    #     targets = [e.target for e in self.graph.es]
-    #
-    #     # Lấy bậc vào (in-degree) của tất cả node
-    #     degrees = self.graph.degree(mode='in')
-    #
-    #     weights = []
-    #     for i, rel in enumerate(rels):
-    #         if rel in blacklist:
-    #             # Chặn đường bằng trọng số vô cực
-    #             weights.append(float('inf'))
-    #         else:
-    #             # Logic: log(degree + 1)
-    #             target_deg = degrees[targets[i]]
-    #             weights.append(math.log(target_deg + 1))
-    #
-    #             # Hoặc Logic đơn giản: Trọng số = 1 (Đường ngắn nhất theo số bước nhảy)
-    #             # Tùy bạn chọn. Logic log(degree) giúp tránh đi qua Hub quá lớn.
-    #              #weights.append(1.0)
-    #
-    #     return weights
 
     def _precompute_weights(self):
         """
@@ -50,13 +20,13 @@ class PathFinder:
         Logic tổng hợp:
         1. Blacklist: Cost = Vô cực.
         2. Hub Penalty: Node càng to (như Vietnam, Google) -> Cost càng cao.
-        3. Generation Gap (Mới): Hai người cách nhau quá 20 tuổi -> Cost tăng mạnh.
+        3. Generation Gap: Hai người cách nhau quá 20 tuổi -> Cost tăng mạnh.
         """
         # 1. Chuẩn bị dữ liệu (Bulk Fetch để tối ưu tốc độ)
-        blacklist = {'religion', 'political_ideology', 'member_of', 'country_of_citizenship'}
+        blacklist = {'influenced_by'}
 
         # Lấy danh sách Label của cạnh
-        rels = self.graph.es['relationshipLabel']
+        rels = self.graph.es['relationship_label']
 
         # Lấy danh sách cạnh dưới dạng tuple (source_index, target_index)
         # Cách này nhanh hơn truy cập e.source, e.target trong vòng lặp
@@ -66,7 +36,7 @@ class PathFinder:
         try:
             node_types = self.graph.vs['type']
             # fillna(0) hoặc đảm bảo dữ liệu đầu vào là số
-            birth_years = self.graph.vs['birthYear']
+            birth_years = self.graph.vs['birth_year']
         except KeyError:
             # Fallback an toàn nếu chưa có thuộc tính
             node_types = ['unknown'] * self.graph.vcount()
@@ -144,3 +114,34 @@ class PathFinder:
 
         except Exception:
             return None
+
+
+    def find_shortest_paths_batch(self, pairs, weight=False ):
+        """
+        Nhập: list of tuples [(s1, t1), (s2, t2), ...]
+        Trả về: list of paths
+        """
+        # Gom nhóm để tối ưu: Các cặp chung id_a chỉ cần chạy Dijkstra 1 lần
+        if not weight:
+            weight = None
+        else:
+            weight = self.weights
+        grouped = defaultdict(list)
+        for i, (s, t) in enumerate(pairs):
+            grouped[s].append((t, i)) # Lưu index để trả về đúng thứ tự
+            
+        results = [None] * len(pairs)
+        
+        for start_node, targets_info in grouped.items():
+            target_nodes = [info[0] for info in targets_info]
+            indices = [info[1] for info in targets_info]
+            
+            # iGraph tìm từ 1 nguồn đến nhiều đích (Multi-destination)
+            # Cực nhanh trên đồ thị 4 triệu nút
+            paths = self.graph.get_shortest_paths(
+                v=start_node, to=target_nodes, weights=weight, output="vpath", mode='all'
+            )
+            
+            for path, original_idx in zip(paths, indices):
+                results[original_idx] = path
+        return results

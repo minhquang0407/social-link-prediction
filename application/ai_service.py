@@ -3,28 +3,31 @@ import pickle
 from core.ai import Predictor
 import pandas as pd
 from config.settings import NODES_DATA_PATH
-from core.logic import RapidFuzzySearch
+from core.interfaces import ISearchEngine
 class AIService:
-    def __init__(self, G_full, model, data, engine:RapidFuzzySearch):
-        self.G_full = G_full
+    def __init__(self,  model, embeddings, engine, predictor):
         self.model = model
-        self.data = data
+        self.embeddings = embeddings
+        self.metadata = predictor.metadata
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print("AI: Đang khởi tạo bộ máy dự đoán!",flush=True)
-        # self.lookup = pd.read_parquet(NODES_DATA_PATH, engine='fastparquet')
-        # self.lookup  = self.lookup.reset_index(drop = False)
-        # self.lookup = self.lookup.set_index(['type','pyg_id'])
         self.search_engine = engine
-        self.predictor = Predictor(model, data, self.device)
+        self.predictor = predictor
+        with open(f'data_output/predicting/adjacency.pkl', 'rb') as f:
+            self.adj = pickle.load(f)
         print("AI: Sẵn sàng!",flush=True)
 
-    def predict_link_score(self, name_src, name_dst):
+    def predict_link_score(self, name_src, name_dst, zero_shot=False):
         src_type, id_src = self.search_engine.search_forward_pyg(name_src)
-        dst_type, id_src = self.search_engine.search_forward_pyg(name_dst)
+        dst_type, id_dst = self.search_engine.search_forward_pyg(name_dst)
 
-        best_rel, max_score, results = self.predictor.scan_relationship(id_a, id_b, src_type, dst_type)
+        mode = 'loose' if zero_shot else 'strict'
 
-        print(f"║ PHÂN TÍCH QUAN HỆ: {src_type} #{id_src} vs {dst_type} #{id_dst} ║")
+        best_rel, max_score, results = self.predictor.scan_relationship(
+            id_src, id_dst, src_type, dst_type, mode=mode
+        )
+
+        print(f"║ PHÂN TÍCH QUAN HỆ:{name_src} {src_type} #{id_src} vs {name_dst} {dst_type} #{id_dst} ║")
 
         # Sắp xếp kết quả
         sorted_res = sorted(results.items(), key=lambda x: x[1], reverse=True)
@@ -33,11 +36,9 @@ class AIService:
         print("-" * 50)
 
         for rel, score in sorted_res:
-            # Logic hiển thị thanh bar
             bar_len = int(score * 25)
             bar = "█" * bar_len + "░" * (25 - bar_len)
 
-            # Logic màu sắc (Text indication)
             status = " "
             if score > 0.8:
                 status = "(Rất cao)"
@@ -48,42 +49,142 @@ class AIService:
 
         print("-" * 50)
 
-    def recommendations_with_rel(self, src_name, rel_name, top_k=10):
-        """In báo cáo Top-K đẹp mắt."""
-        type, src_id = self.search_engine.search_forward_pyg(src_name)
-        print(f"\nĐang tìm Top {top_k} '{rel_name.upper()}' cho User #{src_id}...")
+    def recommendations_relationship(self, src_name, rel_name, top_k=10):
+        """
+        Gợi ý theo quan hệ cụ thể (VD: Tìm 'acted_in' cho Tom Cruise)
+        """
+        src_type, src_id = self.search_engine.search_forward_pyg(src_name)
+        print(f"\nTìm Top {top_k} '{rel_name}' cho {src_name}...")
 
-        ids, scores = self.predictor.recommend_top_k_with_rel(src_id, rel_name, top_k, type)
+        # FIX: Gọi hàm recommend thống nhất
+        results = self.predictor.recommend_top_k(
+            src_id, top_k, src_type,
+            dst_type=None,  # Tự động tìm dst_type dựa trên rel_name
+            rel_name=rel_name
+        )
 
-        print(f"╔══════════════════════════════════════╗")
-        print(f"║ DANH SÁCH GỢI Ý ({rel_name})             ║")
-        print(f"╠══════════════════════════════════════╣")
-
-        for rank, (uid, score) in enumerate(zip(ids, scores)):
-            # Vẽ thanh bar
-            bar_len = int(score * 20)
-            bar = "▓" * bar_len + "░" * (20 - bar_len)
-
-            print(f"║ #{rank + 1:02d} User {uid:<6} | {score:.4f} {bar} ║")
-
-        print(f"╚══════════════════════════════════════╝")
-
-    def print_recommendations(self, src_id, top_k=10, src_type='human', dst_type=None):
-        results = self.recommend(src_id, top_k, src_type, dst_type)
-
-        scope = f"LOẠI: {dst_type.upper()}" if dst_type else "TOÀN BỘ (GLOBAL)"
-        print(f"\n╔══════════════════════════════════════════════════════════════╗")
-        print(f"║ GỢI Ý KẾT NỐI CHO {src_type.upper()} #{src_id} | PHẠM VI: {scope:<12} ║")
-        print(f"╠══════════════════════════════════════════════════════════════╣")
-
+        print(f"║ GỢI Ý CHO {rel_name.upper()} ║")
         for i, item in enumerate(results):
-            score = item['score']
-            target = f"{item['type']} #{item['id']}"
-            rel = f"[{item['relation'].upper()}]"
+            # item: {'id', 'type', 'relation', 'score'}
+            # Cần lấy tên để hiển thị đẹp
+            meta = self.search_engine.search_backward_pyg(item['type'], item['id'])
+            name = meta.get('name', 'Unknown')
+            print(f"#{i + 1:02d} {name[:20]:<20} | {item['score']:.4f}")
 
-            bar_len = int(score * 15)
-            bar = "▓" * bar_len + "░" * (15 - bar_len)
+    def recommendations(self, src_name, top_k=10, dst_type=None):
+        """Gợi ý chung hoặc theo loại đích"""
+        src_type, src_id = self.search_engine.search_forward_pyg(src_name)
 
-            print(f"║ #{i + 1:02d} {target:<18} | {rel:<15} | {score:.4f} {bar} ║")
+        # FIX: Gọi hàm recommend thống nhất
+        results = self.predictor.recommend_top_k(src_id, top_k, src_type, dst_type=dst_type)
 
-        print(f"╚══════════════════════════════════════════════════════════════╝")
+        scope = dst_type.upper() if dst_type else "GLOBAL"
+        print(f"║ GỢI Ý ({scope}) CHO {src_name} ║")
+        for item in results:
+            meta = self.search_engine.search_backward_pyg(item['type'], item['id'])
+            print(f"{meta.get('name')} - [{item['relation']}] - {item['score']:.2f}")
+
+    def predict_spouse_with_constraints(self, src_name, top_k=5, max_age_gap=20):
+        """
+        Dự đoán vợ chồng có kiểm tra ràng buộc logic (Hard Constraints).
+        """
+        # ---------------------------------------------------------
+        # BƯỚC 1: LẤY ỨNG VIÊN TỪ GNN (Soft Constraint)
+        # ---------------------------------------------------------
+        # Lấy Top-50 hoặc Top-100 để có dư địa mà lọc
+        # Bắt buộc dst_type='human' (Ràng buộc 1)
+        src_type, src_id = self.search_engine.search_forward_pyg(src_name)
+        candidates = self.predictor.recommend_top_k(
+            src_id,
+            top_k=100,  # Lấy dư để lọc
+            src_type='human',
+            dst_type='human',
+            rel_name='spouse'
+        )
+
+        valid_spouses = []
+        # Lấy thông tin năm sinh của nguồn (cần lookup dict lưu bên ngoài)
+        src_meta = self.search_engine.search_backward_pyg('human', src_id)
+        src_sex = src_meta.get('sex_or_gender')
+        src_year = src_meta.get('birth_year')
+
+        # ---------------------------------------------------------
+        # BƯỚC 2: HẬU XỬ LÝ (Hard Constraints)
+        # ---------------------------------------------------------
+        def is_valid_year(y):
+            return y is not None and not pd.isna(y)
+        for cand in candidates:
+            dst_id = cand['id']
+            dst_meta = self.search_engine.search_backward_pyg('human', dst_id)
+            cand['sex'] = dst_meta.get('sex_or_gender', 'Unknown')
+            cand['birth_year'] = dst_meta.get('birth_year')
+            cand['name'] = dst_meta.get('name')
+            # --- Ràng buộc 1: Khoảng cách tuổi tác ---
+            # Nếu cả 2 đều có năm sinh, kiểm tra chênh lệch
+            dst_year = cand['birth_year']
+            if is_valid_year(src_year) and is_valid_year(dst_year):
+                try:
+                    age_gap = abs(int(src_year) - int(dst_year))
+
+                    if age_gap > max_age_gap:
+                        cand['score'] *= 0.5
+                except (ValueError, TypeError):
+                    pass
+
+            # --- Ràng buộc 2: Quan hệ huyết thống (Taboo) ---
+            # Kiểm tra xem trong đồ thị hiện tại đã có cạnh cấm kỵ chưa
+            if self.check_existing_connection(src_id, dst_id, ['sibling', 'father', 'mother','rev_sibling', 'rev_father', 'rev_mother']):
+                continue
+
+            # Nếu vượt qua mọi cửa ải -> Chấp nhận
+            valid_spouses.append(cand)
+            # Đủ số lượng thì dừng
+            if len(valid_spouses) >= top_k:
+                break
+        print(f"║ GỢI Ý VỢ CHỒNG CHO {src_type.upper()} #{src_id} | THÔNG TIN: {src_year}/{src_sex} ║")
+        print(f"║ ỨNG VIÊN VỢ/CHỒNG CHO {src_name} ║")
+        for item in valid_spouses:
+            print(f"{item['name']} ({item['birth_year']}/{item['sex']}) - Score: {item['score']:.4f}")
+
+    def has_edge(self, src_idx, dst_idx, src_type, rel, dst_type):
+        """
+        Kiểm tra cạnh với logic "Double Check" cho quan hệ đối xứng.
+        """
+        key = (src_type, rel, dst_type)
+        if key not in self.adj: return False
+
+        matrix = self.adj[key]
+        rows, cols = matrix.shape
+
+        # --- LẦN 1: Check đúng thứ tự người dùng truyền vào (A -> B) ---
+        if src_idx < rows and dst_idx < cols:
+            if matrix[src_idx, dst_idx]:
+                return True
+
+        # --- LẦN 2: Đảo ngược vị trí để check lại (B -> A) ---
+        # Chỉ thực hiện nếu 2 node CÙNG LOẠI (VD: Human-Human)
+        # Vì Human-Org mà đảo ngược thì sai về mặt logic và crash ma trận
+        if src_type == dst_type:
+            # Lúc này dst_idx đóng vai trò là Hàng (Row), src_idx là Cột (Col)
+            if dst_idx < rows and src_idx < cols:
+                if matrix[dst_idx, src_idx]:
+                    return True
+
+        return False
+
+    def check_existing_connection(self, id_a, id_b, taboo_rels):
+        """Check nhanh taboo"""
+        for rel in taboo_rels:
+            # Check A -> B
+            key_fwd = ('human', rel, 'human')
+            if key_fwd in self.adj:
+                if self.adj[key_fwd][id_a, id_b]: return True
+
+            # Check B -> A (Quan trọng cho quan hệ 2 chiều)
+            # Vì sparse matrix là có hướng, nên phải check ngược lại bằng key rev hoặc check index ngược
+            # Nếu data của bạn có cạnh 'rev_', check key đó sẽ an toàn hơn.
+            # Hoặc đơn giản:
+            if key_fwd in self.adj and id_b < self.adj[key_fwd].shape[0] and id_a < self.adj[key_fwd].shape[1]:
+                if self.adj[key_fwd][id_b, id_a]: return True
+
+        return False
