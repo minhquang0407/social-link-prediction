@@ -37,8 +37,6 @@ class RapidFuzzySearch(ISearchEngine):
         else:
             self.search_map, self.all_keys = {}, []
 
-    def get_all_keys(self):
-        return self.lookup
     def search_best(self, query: str, threshold= SEARCH_THRESHOLD):
         """
         Thực thi tìm kiếm mờ.
@@ -134,8 +132,7 @@ class RapidFuzzySearch(ISearchEngine):
 
     def search_backward_pyg(self, type, pyg_id):
         lookup_backward = self.lookup.set_index(['type','pyg_id'])
-        info = lookup_backward.loc[type].loc[pyg_id]
-        return info
 
-    def get_lookup(self):
-        return self.lookup
+        id = lookup_backward.loc[(type,pyg_id),'id']
+
+        return id

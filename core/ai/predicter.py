@@ -1,257 +1,292 @@
-import os
-
+import pandas as pd
 import torch
-import torch.amp
-from torch_geometric.loader import NeighborLoader
-from tqdm import tqdm
-from config.settings import PYG_DATA_PATH, PREDICT_DATA_PATH
-from infrastructure.repositories import PyGDataRepository
 from core.interfaces import ILinkPredictor
-
-
+from torch_geometric.loader import NeighborLoader, LinkNeighborLoader
+from tqdm import tqdm
+import torch.amp
+from config.settings import NODES_DATA_PATH
 class Predictor(ILinkPredictor):
-    def __init__(self, model, data = None,  metadata = None, embeddings=None):
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    """
+    Lớp dùng để tính toán và cache vector nhúng (Z) của tất cả các node ('person'),
+    sau đó thực hiện tìm kiếm node tương đồng (Link Prediction).
+    """
+    def __init__(self, model, data, device):
         self.model = model
-        if data is not None:
-            self.data = data
-            self.metadata = data.metadata()
-        elif metadata is not None:
-            self.metadata = metadata
+        self.data = data
+        self.device = device
         self.model.eval()
-        self.model.to(self.device)
-
-        if embeddings is None and data is not None:
-            if os.path.exists(str(PREDICT_DATA_PATH)):
-                self.embeddings = torch.load(str(PREDICT_DATA_PATH))
-            else:
-                self.embeddings = self._compute_all_embeddings()
-        else:
-            self.embeddings = embeddings
-
+        self.model.to(device)
+        self.embeddings = None
         self.connectivity_map = self._build_connectivity_map()
-        self.BIOLOGICAL_RELS = {
-            'spouse', 'sibling', 'father', 'mother', 'child',
-            'student_of'
-        }
-        self.HUMAN_SRC_ONLY = {
-            'educated_at', 'student_of'
-        }
     @torch.no_grad()
-    def _compute_all_embeddings(self, batch_size=512):
-        """Tính và trả về Embeddings (Không lưu attribute để tránh side-effect)"""
-        if self.data is None:
-            repo = PyGDataRepository(PYG_DATA_PATH)
-            data = repo.load_data()
-        else: data = self.data
-        embeddings = {}
-
-        print(f"🚀 Computing Embeddings on {self.device}...")
-
-        for node_type in data.node_types:
-            if data[node_type].num_nodes == 0: continue
-
-            loader = NeighborLoader(
-                data,
-                num_neighbors=[20, 10],
-                input_nodes=node_type,
-                shuffle=False,
-                num_workers=0,
-                batch_size=batch_size
-            )
-
-            all_embs = []
-            with torch.no_grad():
-                for batch in tqdm(loader, desc=f"Enc {node_type}", leave=False):
-                    batch = batch.to(self.device)
-                    with torch.amp.autocast('cuda'):
-                        z_dict = self.model.encoder(batch.x_dict, batch.edge_index_dict)
-
-                    if node_type in z_dict:
-                        bs = batch[node_type].batch_size
-                        all_embs.append(z_dict[node_type][:bs].cpu())
-
-            if all_embs:
-                embeddings[node_type] = torch.cat(all_embs, dim=0)
-
-        # Save 1 lần sau khi xong hết
-        torch.save(embeddings, str(PREDICT_DATA_PATH))
-        return embeddings
-
-    @torch.no_grad()
-    def _build_connectivity_map(self):
-        # Dùng metadata (edge_types) được truyền vào init thay vì self.edge_types
-        node_types, edge_types = self.metadata
-        mapping = {}
-        for src, rel, dst in edge_types:
-            if src not in mapping: mapping[src] = {}
-            if dst not in mapping[src]: mapping[src][dst] = []
-            mapping[src][dst].append(rel)
-        return mapping
-
-    def scan_relationship(self, id_a, id_b, src_type, dst_type, mode='strict'):
+    def _compute_all_embeddings(self, batch_size=128):
         """
-        Args:
-            mode (str):
-                - 'strict': Chỉ check các quan hệ có trong Metadata (Human-Org -> work_at).
-                - 'loose': Check TẤT CẢ quan hệ mà model biết (Human-Org -> thử cả spouse, member_of...).
-                           Dùng cho Zero-shot / Vay mượn.
+        Chạy model 1 lần để lấy vector của TẤT CẢ các node.
+        Hàm này dùng để cache vector Z.
         """
+
+        self.model.eval()
+        loader = NeighborLoader(
+            data = self.data,
+            input_nodes = None,
+            num_neighbors= [20,10],
+            shuffle = False,
+            num_workers = 0,
+            batch_size= batch_size
+        )
+
+        temp_embs = {nt: [] for nt in self.data.node_types}
+
+        with torch.no_grad():
+            pbar = tqdm(loader, desc = "Encoding Nodes")
+            for batch in pbar:
+                batch = batch.to(self.device)
+
+                with torch.amp.autocast('cuda'):
+                    z_dict = self.model.encoder(batch.x_dict, batch.edge_index_dict)
+
+                for nt, z in z_dict.items():
+                    if nt in batch and batch[nt].batch_size is not None:
+                        num_target = batch[nt].batch_size
+                        temp_embs[nt].append(z[:num_target].cpu())
+
+        for nt, embs in temp_embs.items():
+            if embs:
+                self.embeddings[nt] = torch.cat(embs, dim=0)
+
+    def _get_score(self, src_id, dst_id, src_type, rel, dst_type):
+        if src_type not in self.embeddings or dst_type not in self.embeddings:
+            return 0.0
+
+        try:
+            vec_a = self.embeddings[src_type][src_id].to(self.device).unsqueeze(0)
+            vec_b = self.embeddings[dst_type][dst_id].to(self.device).unsqueeze(0)
+        except IndexError:
+            return 0.0
+
+        key = f"{src_type}__{rel}__{dst_type}"
+        if key in self.model.decoders:
+            logits = self.model.decoders[key](vec_a, vec_b)
+            return torch.sigmoid(logits).item()
+        else:
+            return 0.0
+
+    def scan_relationship(self, id_a, id_b, src_type = 'human', dst_type = 'human'):
         results = {}
         max_score = -1
         best_rel = None
 
-        # 1. Xác định danh sách quan hệ cần kiểm tra
-        candidate_rels = set()
+        for et in self.data.edge_types:
+            s, r, d = et
+            if s == src_type and d == dst_type and not r.startswith('rev_'):
+                score = self._get_score(id_a, id_b, s, r, d)
+                results[r] = score
 
-        if mode == 'strict':
-            # Cách cũ: Chỉ lấy những gì schema cho phép
-            candidate_rels = set(self.connectivity_map.get(src_type, {}).get(dst_type, []))
-        else:
-            # Cách mới (Zero-shot): Lấy TOÀN BỘ các quan hệ model đã học
-            # Duyệt qua keys của decoder để trích xuất tên quan hệ
-            for key in self.model.decoders.keys():
-                rel_name = key.strip('_')
-                if '__' in key.strip('_'): rel_name = key.split('__')[1]
-                candidate_rels.add(rel_name)
-
-
-
-        # 2. Duyệt và Dự đoán
-        for rel in candidate_rels:
-            if rel.startswith('rev_'): continue
-
-            # --- [BỘ LỌC NGỮ NGHĨA - SEMANTIC FILTER] ---
-
-            # Luật 1: Quan hệ Sinh học (Vợ chồng, anh em...)
-            if rel in self.BIOLOGICAL_RELS:
-                if src_type != 'human' or dst_type != 'human':
-                    continue
-
-            # Luật 2: Quan hệ Hành vi con người (Tác giả, Đạo diễn...)
-            if rel in self.HUMAN_SRC_ONLY:
-                if src_type != 'human':
-                    continue
-            score = self._get_score_fast(id_a, id_b, src_type, rel, dst_type)
-
-            if score > 0.001:
-                results[rel] = score
                 if score > max_score:
                     max_score = score
-                    best_rel = rel
-
+                    best_rel = r
         return best_rel, max_score, results
 
-    def _get_score_fast(self, src_id, dst_id, src_type, rel, dst_type):
-        """Helper function tính điểm 1 cạnh"""
-        if rel.startswith('rev_'): rel = rel.replace('rev_', '')
+    @torch.no_grad()
+    def recommend_top_k_with_rel(self, src_id, rel_name, top_k=10, src_type='human'):
+        """
+        Tìm Top-K node đích có khả năng liên kết cao nhất với src_id theo quan hệ rel_name.
+        """
+        if not self.is_ready:
+            raise RuntimeError("Chưa chạy .precompute_embeddings()!")
+        for et in self.data.edge_types:
+            s, rel, d = et
+            if s == src_type and rel == rel_name:
+                dst_type = d
+                break
+        # 1. Xác định Decoder chuyên gia
+        key = f"{src_type}__{rel_name}__{dst_type}"
+        if key not in self.model.decoders:
+            raise ValueError(f"Không tìm thấy mô hình cho quan hệ: {key}")
 
-        # Giả sử decoder lưu theo key dạng "__rel__" như bạn định nghĩa
-        key = f"__{rel}__"
+        decoder = self.model.decoders[key]
 
-        if key not in self.model.decoders: return 0.0
-
+        # 2. Chuẩn bị Vector nguồn (Ông A)
         try:
-            vec_a = self.embeddings[src_type][src_id].to(self.device).view(1, -1)
-            vec_b = self.embeddings[dst_type][dst_id].to(self.device).view(1, -1)
-            logits = self.model.decoders[key](vec_a, vec_b)
-            return torch.sigmoid(logits).item()
-        except:
-            return 0.0
+            # Shape: [1, Hidden_Dim]
+            vec_src = self.embeddings[src_type][src_id].view(1, -1).to(self.device)
+        except IndexError:
+            return [], []  # ID không tồn tại
+
+        # 3. Lấy toàn bộ Vector đích (Tất cả mọi người)
+        # Shape: [Num_Candidates, Hidden_Dim]
+        # Lưu ý: candidates_emb đang ở CPU
+        candidates_emb = self.embeddings[dst_type]
+        num_candidates = candidates_emb.size(0)
+
+        # 4. CHẠY BATCH INFERENCE (Để không cháy VRAM)
+        # Vì chỉ là phép nhân ma trận đơn giản nên batch có thể rất to
+        eval_batch_size = 4096
+        all_scores = []
+
+        # Duyệt qua từng cụm ứng viên
+        for i in range(0, num_candidates, eval_batch_size):
+            # Cắt batch ứng viên và đưa lên GPU
+            batch_dst = candidates_emb[i: i + eval_batch_size].to(self.device)
+
+            # Mở rộng vec_src để khớp kích thước batch
+            # [1, H] -> [Batch_Size, H]
+            batch_src = vec_src.expand(batch_dst.size(0), -1)
+
+            # Tính điểm qua Decoder
+            # Dùng AMP cho nhanh
+            with torch.amp.autocast('cuda'):
+                logits = decoder(batch_src, batch_dst)
+                scores = torch.sigmoid(logits).view(-1)  # Ép về 1 chiều
+
+            # Đưa về CPU ngay lập tức để tiết kiệm VRAM
+            all_scores.append(scores.cpu())
+
+        # 5. Nối lại thành 1 tensor điểm số khổng lồ
+        final_scores = torch.cat(all_scores)
+
+        # Gán điểm -1.0 cho chính bản thân mình (để không tự gợi ý mình)
+        if src_type == dst_type:
+            final_scores[src_id] = -1.0
+
+        # 6. Lấy Top K (Hàm topk của PyTorch siêu nhanh)
+        # values: Điểm số, indices: ID của người được gợi ý
+        values, indices = torch.topk(final_scores, k=top_k)
+
+        return indices.numpy(), values.numpy()
+
+
+    def predict_link_score(self):
+        """
+        Tính toán điểm liên kết (link score) giữa hai vector và chuyển thành xác suất.
+        """
 
     @torch.no_grad()
-    def recommend_top_k(self, src_id, top_k=10, src_type='human', dst_type=None, rel_name=None):
+    def _build_connectivity_map(self):
+        mapping = {}
+        for src, rel, dst in self.data.edge_types:
+            if rel.startswith('rev_'): continue
+
+            if src not in mapping: mapping[src] = {}
+            if dst not in mapping[src]: mapping[src][dst] = []
+
+            mapping[src][dst].append(rel)
+        return mapping
+
+    @torch.no_grad()
+    def recommend_top_k(self, src_id, top_k=10, src_type='human', dst_type=None):
         """
-        HÀM GỢI Ý THỐNG NHẤT (UNIFIED RECOMMENDATION)
-        Xử lý cả 3 trường hợp:
-        1. Có rel_name -> Tìm theo quan hệ cụ thể.
-        2. Có dst_type -> Tìm theo loại đích (Max-pool qua các quan hệ).
-        3. Không có gì -> Tìm toàn cục (Global).
+        Hàm gợi ý đa năng:
+        - Nếu dst_type=None: Tìm Top-K trên TOÀN BỘ hệ thống (Global).
+        - Nếu dst_type='...': Tìm Top-K chỉ trên loại node đó (Specific).
+
+        Returns:
+            List[Dict]: Danh sách kết quả đã sort.
+            Mỗi item: {'id', 'type', 'relation', 'score'}
         """
+        # 1. Kiểm tra đầu vào
+        if not hasattr(self, 'embeddings') or not self.embeddings:
+            raise RuntimeError("Chưa có Embeddings. Hãy chạy precompute trước.")
+
         if src_type not in self.embeddings: return []
 
         try:
             vec_src = self.embeddings[src_type][src_id].view(1, -1).to(self.device)
         except IndexError:
-            return []
+            return []  # ID nguồn không tồn tại
 
-        # 1. Lên kế hoạch tìm kiếm (Search Plan)
-        search_plan = {}  # {dst_type: [rel1, rel2]}
+        # 2. Xác định phạm vi tìm kiếm (Target Groups)
+        # target_groups dạng: {dst_type: [rel_name_1, rel_name_2]}
+        target_groups = {}
 
-        if rel_name:
-            # Case 1: Tìm theo quan hệ cụ thể
-            node_types, edge_types = self.metadata
-            for s, r, d in edge_types:
-                if s == src_type and r == rel_name:
-                    if dst_type is None or dst_type == d:
-                        if d not in search_plan: search_plan[d] = []
-                        search_plan[d].append(r)
-        elif dst_type:
-            # Case 2: Tìm theo loại đích
-            rels = self.connectivity_map.get(src_type, {}).get(dst_type, [])
-            if rels: search_plan[dst_type] = rels
+        if dst_type is not None:
+            # CASE A: Tìm kiếm cụ thể (VD: chỉ tìm 'human')
+            if src_type in self.connectivity_map and dst_type in self.connectivity_map[src_type]:
+                target_groups[dst_type] = self.connectivity_map[src_type][dst_type]
+            else:
+                return []  # Không có đường nối giữa src và dst này
         else:
-            # Case 3: Global
-            search_plan = self.connectivity_map.get(src_type, {})
+            # CASE B: Tìm kiếm toàn cục (Global)
+            if src_type in self.connectivity_map:
+                target_groups = self.connectivity_map[src_type]
+            else:
+                return []
+
+        print(f"🌍 Đang quét liên kết từ '{src_type} #{src_id}' đến {list(target_groups.keys())}...")
 
         global_candidates = []
-        eval_batch_size = 4096
 
-        # 2. Thực thi
-        for target_type, rels in search_plan.items():
+        # 3. Vòng lặp chính: Duyệt qua từng loại Node Đích
+        for target_type, rel_names in target_groups.items():
+
             if target_type not in self.embeddings: continue
 
-            candidates_emb = self.embeddings[target_type]
-            num_candidates = candidates_emb.size(0)
+            candidates_emb = self.embeddings[target_type]  # CPU Tensor
+            num_dst = candidates_emb.size(0)
 
-            # Tensor lưu Max Score cho mỗi candidate của loại này
-            best_scores = torch.full((num_candidates,), -1.0, device='cpu')
-            best_rels = [None] * num_candidates
+            # Tensor lưu Max Score cho mỗi node đích thuộc loại này
+            # (Khởi tạo -1)
+            type_max_scores = torch.full((num_dst,), -1.0, dtype=torch.float32)
+            type_best_rels = [None] * num_dst  # Lưu tên quan hệ tốt nhất
 
-            for r_name in rels:
-                if r_name.startswith('rev_'): continue  # Bỏ qua cạnh ngược nếu muốn
-
-                key = f"__{r_name}__"  # Format key decoder
+            # 3.1. Max-Pooling qua các quan hệ (VD: Friend vs Colleague)
+            for rel_name in rel_names:
+                key = f"{src_type}__{rel_name}__{target_type}"
                 if key not in self.model.decoders: continue
+
                 decoder = self.model.decoders[key]
 
                 # Batch Inference
-                for i in range(0, num_candidates, eval_batch_size):
-                    batch_dst = candidates_emb[i: i + eval_batch_size].to(self.device)
+                batch_size = 4096
+                for i in range(0, num_dst, batch_size):
+                    batch_dst = candidates_emb[i: i + batch_size].to(self.device)
+                    # Expand src để khớp batch
                     batch_src = vec_src.expand(batch_dst.size(0), -1)
 
                     with torch.amp.autocast('cuda'):
                         logits = decoder(batch_src, batch_dst)
                         scores = torch.sigmoid(logits).view(-1).cpu()
 
-                    # Cập nhật Max Score
+                    # Cập nhật Max Score thủ công trên CPU
+                    # (Logic: Nếu score mới > score cũ thì cập nhật score và relation)
+                    # Dùng slicing để gán cho nhanh
                     current_slice = slice(i, i + len(scores))
-                    mask = scores > best_scores[current_slice]
-                    best_scores[current_slice] = torch.where(mask, scores, best_scores[current_slice])
 
-                    # Update Relation Name
+                    # Tạo mask cho những điểm tốt hơn
+                    mask = scores > type_max_scores[current_slice]
+
+                    # Update Score
+                    type_max_scores[current_slice] = torch.where(
+                        mask, scores, type_max_scores[current_slice]
+                    )
+
+                    # Update Relation Name (Cần loop vì đây là list string)
                     indices = torch.nonzero(mask).flatten() + i
                     for idx in indices:
-                        best_rels[idx.item()] = r_name
+                        type_best_rels[idx.item()] = rel_name
 
-            # Self-loop check
+            # 3.2. Xử lý Self-loop (Không gợi ý chính mình)
             if src_type == target_type:
-                best_scores[src_id] = -1.0
+                type_max_scores[src_id] = -1.0
 
-            # Local Top-K
-            k_local = min(top_k, num_candidates)
-            vals, indices = torch.topk(best_scores, k=k_local)
+            # 3.3. Lấy Top-K cục bộ (của loại node này)
+            # Lấy nhiều hơn top_k một chút để khi gộp Global không bị thiếu
+            k_local = min(top_k, num_dst)
+            vals, indices = torch.topk(type_max_scores, k=k_local)
 
-            for val, idx in zip(vals, indices):
-                if val > 0.0:
+            # Đưa vào danh sách tổng
+            for score, idx in zip(vals, indices):
+                if score > 0.0:
                     idx = idx.item()
                     global_candidates.append({
+                        'score': score.item(),
                         'id': idx,
                         'type': target_type,
-                        'relation': best_rels[idx],
-                        'score': val.item()
+                        'relation': type_best_rels[idx]
                     })
 
-        # 3. Global Sort
+        # 4. Sắp xếp Global và lấy Top-K cuối cùng
+        # Sort giảm dần theo score
         global_candidates.sort(key=lambda x: x['score'], reverse=True)
+
         return global_candidates[:top_k]

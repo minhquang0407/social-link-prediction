@@ -18,7 +18,7 @@ class PickleGraphRepository(IGraphRepository):
     def __init__(self, file_path: Path):
         self.file_path = file_path
 
-    def save_graph(self, G):
+    def save_graph(self, G: nx.Graph):
         """
         Lưu đồ thị NetworkX xuống đĩa.
         Tự động tạo thư mục cha nếu chưa tồn tại.

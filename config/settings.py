@@ -11,7 +11,7 @@ RAW_PARQUET_DIR = DATA_DIR / "raw/parquet"
 GRAPH_DIR = DATA_DIR / "graph"
 TRAINING_DIR = DATA_DIR / "training"
 MODELS_DIR = DATA_DIR / "models"
-PREDICT_DIR = DATA_DIR / "predicting"
+PREDICT_DIR = DATA_DIR / "predict"
 for d in [CLEAN_DATA_DIR,DATA_DIR, RAW_JSON_DIR, RAW_PARQUET_DIR, GRAPH_DIR, TRAINING_DIR, MODELS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
@@ -25,10 +25,8 @@ ANALYTICS_PATH = GRAPH_DIR / "analytics.json"
 
 PYG_DATA_PATH = TRAINING_DIR / "pyg_data.pt"
 PYG_TRAINING_DATA_PATH = TRAINING_DIR / "pyg_training_data.pt"
-MODEL_PATH = MODELS_DIR / "model.pt"
-PREDICT_DATA_PATH = PREDICT_DIR/ "embeddings.pt"
-METADATA_PATH = PREDICT_DIR / "metadata.pkl"
-ADJACENCY_PATH = PREDICT_DIR / "adjacency.pkl.gz"
+MODEL_PATH = MODELS_DIR / "model.pth"
+PREDICT_DATA = PREDICT_DIR/ "all_vector_embeddings.pt"
 TRAINING_HISTORY_PATH = DATA_DIR / "training_history.json"
 
 SPARQL_TIMEOUT = 300
@@ -40,7 +38,7 @@ LEARNING_RATE = 0.01
 EPOCHS = 100
 BATCH_SIZE = 2048
 FUZZY_THRESHOLD = 60.0
-MIN_EDGE_COUNT = 500
+
 MAX_YEAR = 2025
 MIN_YEAR = 1800
 SEARCH_THRESHOLD = 60
