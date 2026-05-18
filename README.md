@@ -19,6 +19,16 @@ An advanced social network analysis system leveraging Heterogeneous Graph Neural
 
 ---
 
+## Project Context and Objectives
+
+In the digital knowledge era, Knowledge Graphs (KGs) like Wikidata serve as the backbone for modern AI systems. However, these graphs often suffer from incomplete and sparse relations, representing "knowledge shadows". 
+
+This project implements a hybrid Neuro-Symbolic AI approach that combines:
+* **Symbolic Reasoning**: Logical and structural path calculations using C-Core graph algorithms (igraph).
+* **Neural representation**: Implicit deep learning over continuous vector spaces using Heterogeneous Graph Neural Networks (GNN).
+
+---
+
 ## System Architecture (Clean Architecture)
 
 The project adheres to the strict principles of Clean Architecture to ensure modularity, scalability, and testability across layers:
@@ -65,19 +75,31 @@ graph TD
 
 The automated ETL pipeline manages high-scale knowledge graph ingestion:
 
-### 1. Extraction
-* Developed a robust SPARQL Wrapper ([extractor.py](file:///c:/Users/nguye/social-link-prediction/infrastructure/pipelines/extractor.py)) to fetch data from the live Wikidata endpoint.
-* Implemented a birth interval scanning mechanism. Querying data in batches based on birth years prevents API rate limits and timeouts.
-* Formulated semantic queries in [queries.py](file:///c:/Users/nguye/social-link-prediction/config/queries.py) for relations including: `spouse`, `employer`, `educated_at`, and `colleague`.
+### 1. Ingestion & Multi-Stage Extraction
+* Developed a robust SPARQL Wrapper ([extractor.py](file:///c:/Users/nguye/social-link-prediction/infrastructure/pipelines/extractor.py)) to fetch structured RDF Triples, T = (Subject, Predicate, Object), from the live Wikidata endpoint.
+* Implemented a birth interval scanning mechanism. Querying data in parallel batches based on birth years (e.g., 5-year buckets) prevents API rate limits and timeouts.
+* Formulated semantic queries in [queries.py](file:///c:/Users/nguye/social-link-prediction/config/queries.py) for relations including: `educated_at`, `work_at`, `award_received`, `father`, `mother`, `spouse`, `employer`, and `colleague`.
 
-### 2. Transformation & Cleansing
-* Managed anomalies in [transformer.py](file:///c:/Users/nguye/social-link-prediction/infrastructure/pipelines/transformer.py): cleaned duplicate edges, normalized bidirectional relationships, resolved null birth years, and eliminated self-loops.
-* Serialized processed entities into highly optimized Apache Parquet tables to achieve maximum I/O throughput.
+### 2. Transformation, Cleansing & Deduplication
+* Managed anomalies in [transformer.py](file:///c:/Users/nguye/social-link-prediction/infrastructure/pipelines/transformer.py): resolved self-loops, normalized bidirectional relations, cleaned duplicate edges using mapped keys `(id_min + "_" + id_max + "_" + relation)`, and computed missing values (imputation on birth year).
+* Serialized processed entities into highly optimized Apache Parquet tables to achieve maximum I/O throughput and clean structure.
 
-### 3. Feature Engineering & HeteroData Construction
-* **Semantic Encoding**: Embedded multi-lingual node text attributes (name, description, occupation, birthplace, gender, country) into a 384-dimensional dense vector using the pre-trained Sentence-BERT (`paraphrase-multilingual-MiniLM-L12-v2`) model.
+### 3. Graph Scale and Topological Statistics
+* **Dataset Scale**:
+  * **Nodes**: 4,609,521 entities (including 3,247,681 `human` nodes, 438,293 `written_work` nodes, 315,908 `film` nodes, etc. spanning 11 total types).
+  * **Edges**: 10,761,807 active connections spanning 44 relationship categories (dominated by `educated_at` with 1,714,215 edges and `work_at` with 1,669,322 edges).
+* **CCDF & Power-Law Exponent**:
+  * Analysis of the Cumulative Complementary Distribution Function (CCDF) on a Log-Log scale shows a scale-free topology.
+  * The Power-Law exponent estimated via Maximum Likelihood Estimation (MLE) yields:
+    
+    `gamma = 1 + n * [ sum( ln(k_i / (k_min - 0.5)) ) ]^-1`
+    
+    Setting the cut-off `k_min = 100` yields `gamma = 3.35`, showing that the graph is scale-free with tiptoeing properties resembling a random-like network since super-connected hubs do not completely centralize the entire connectivity.
+
+### 4. Feature Engineering & PyG HeteroData Construction
+* **Semantic Encoding**: Embedded multi-lingual node text attributes (name, description, occupation, birthplace, gender, interests) into a 384-dimensional dense vector using the pre-trained Sentence-BERT (`paraphrase-multilingual-MiniLM-L12-v2`) model.
 * **Structural Engineering**: 
-  * Computed Multi-view PageRank scores for each edge type using the C-core `igraph` library.
+  * Computed Multi-view PageRank scores (45 distinct views based on different relationship categories) using the C-core `igraph` library.
   * Computed global node degrees and applied a log-transform (`log1p`) to mitigate the outsized influence of major hubs.
 * **Temporal Features**: Scaled birth years using Min-Max normalization and created a binary indicator flag for missing values.
 * **Feature Concat**: Consolidated all properties into a unified 432-dimensional node feature tensor:
@@ -90,7 +112,7 @@ The automated ETL pipeline manages high-scale knowledge graph ingestion:
 
 ## Graph Neural Network (GNN) Modeling
 
-The deep learning model is developed using PyG to predict pairwise link probabilities on heterogeneous graphs.
+The GNN model is developed using PyG to predict pairwise link probabilities on heterogeneous graphs.
 
 ### 1. Inductive Encoder (GraphSAGE)
 * Employed a message-passing GraphSAGE architecture to support inductive learning. The model generalizes to unseen nodes at inference time without requiring full retraining.
@@ -107,7 +129,8 @@ The deep learning model is developed using PyG to predict pairwise link probabil
 * Placed a Sigmoid activation function at the output layer to map scores directly to connection probabilities in `[0.0, 1.0]`.
 
 ### 3. Structural Constraints & Graph Pathfinding
-* **Taboo Filters**: Hard-coded structural rules to filter out family relations (sibling, parent) during spouse recommendations.
+* **Degrees of Separation (Social Distance)**: Defined specifically on nodes of type `human`, calculating the number of human steps separating two individuals, matching the "Six Degrees of Separation" theorem.
+* **Taboo Filters**: Hard-coded structural rules to filter out family relations (sibling, father, mother) during spouse recommendations.
 * **Age Gap Penalty**: Automatically penalizes GNN link scores or increases Dijkstra edge weights when the age gap between individuals exceeds 20 years.
 * **Hub Penalty**: Dijkstra edge costs are computed as:
   
@@ -122,7 +145,7 @@ The deep learning model is developed using PyG to predict pairwise link probabil
 1. **Six Degrees of Separation (BFS)**: Computes the shortest path between any two individuals, displaying a visual timeline and an interactive network using pyvis.
 2. **Pairwise Link Prediction**: Evaluates two nodes and displays a probability bar chart for all relationships in real-time.
 3. **Connection & Spouse Advisor**: Recommends partners using GNN scores and hard constraints (age limits, taboo checks, gender filters).
-4. **Network Analytics**: Visualizes node degree distributions and maps top PageRank centrality nodes using stylized HTML cards.
+4. **Network Analytics**: Visualizes node degree distributions, scale-free power law, and maps top PageRank centrality nodes using stylized HTML cards.
 5. **Ego Network Explorer**: Renders the 1-degree neighborhood surrounding a central node inside a dynamic, physics-enabled network.
 
 ---
@@ -147,7 +170,17 @@ streamlit run main.py
 
 # Bản tiếng Việt
 
-Hệ thống Social Link Prediction là giải pháp phân tích mạng lưới xã hội nâng cao, tích hợp công nghệ Học sâu đồ thị (Graph Neural Networks - GNN) dị thể và các thuật toán cấu trúc đồ thị tối ưu. Dự án thu thập dữ liệu tri thức thế giới thực từ Wikidata API, xử lý kỹ thuật dữ liệu quy mô lớn (Data Engineering), và xây dựng mô hình AI dự đoán các mối quan hệ ẩn hoặc tiềm năng tương lai giữa các thực thể (người dùng, tổ chức, trường học...).
+Hệ thống **Social Link Prediction** là giải pháp phân tích mạng lưới xã hội nâng cao, tích hợp công nghệ **Học sâu đồ thị (Graph Neural Networks - GNN)** dị thể và các thuật toán cấu trúc đồ thị tối ưu. Dự án thu thập dữ liệu tri thức thế giới thực từ **Wikidata API**, xử lý kỹ thuật dữ liệu quy mô lớn (Data Engineering), và xây dựng mô hình AI dự đoán các mối quan hệ ẩn hoặc tiềm năng tương lai giữa các thực thể (người dùng, tổ chức, trường học...).
+
+---
+
+## Bối cảnh và Mục tiêu dự án
+
+Trong kỷ nguyên tri thức số, các Đồ thị Tri thức như Wikidata đóng vai trò là "xương sống" cho các hệ thống Trí tuệ nhân tạo hiện đại. Tuy nhiên, các hệ thống này đang đối mặt với "Vùng tối tri thức" – nơi các mối quan hệ xã hội thực tế tồn tại nhưng chưa được số hóa, dẫn đến tính không đầy đủ và thưa thớt của dữ liệu.
+
+Đề tài này xây dựng giải pháp trên nền tảng kiến trúc lai **Neuro-Symbolic AI**, tối ưu hóa sự kết hợp giữa:
+* **Symbolic (Biểu trưng)**: Khả năng suy luận logic cấu trúc đồ thị cực nhanh nhờ lõi C-Core (igraph).
+* **Neural (Nơ-ron)**: Khả năng học biểu diễn ẩn mạnh mẽ của mạng nơ-ron đồ thị dị thể (GNN) trên không gian liên tục.
 
 ---
 
@@ -155,7 +188,7 @@ Hệ thống Social Link Prediction là giải pháp phân tích mạng lưới 
 
 Hệ thống được thiết kế và triển khai chặt chẽ theo nguyên lý Kiến trúc Sạch (Clean Architecture) nhằm đảm bảo tính module hóa, độc lập và dễ dàng mở rộng:
 
-* **Presentation Layer (Lớp Giao diện)**: Xây dựng bằng Streamlit, bao gồm 4 Tab nghiệp vụ trực quan hóa cao kết hợp thư viện đồ thị động PyVis.
+* **Presentation Layer (Lớp Giao diện)**: Xây dựng bằng Streamlit, bao gồm 5 Tab nghiệp vụ trực quan hóa cao kết hợp thư viện đồ thị động PyVis.
 * **Application Layer (Lớp Nghiệp vụ Service)**: [ai_service.py](file:///c:/Users/nguye/social-link-prediction/application/ai_service.py) và [analysis_service.py](file:///c:/Users/nguye/social-link-prediction/application/analysis_service.py) đóng vai trò điều hợp luồng dữ liệu và thuật toán.
 * **Core Logic Layer (Lớp Lõi thuật toán)**: Chứa định nghĩa mô hình GNN, thuật toán BFS/Dijkstra tối ưu trọng số và bộ máy tìm kiếm mờ Fuzzy Search sử dụng `rapidfuzz`.
 * **Infrastructure Layer (Lớp Hạ tầng ETL)**: Quản lý trích xuất dữ liệu từ Wikidata, làm sạch và lưu trữ đồ thị thông qua các Repositories.
@@ -166,27 +199,38 @@ Hệ thống được thiết kế và triển khai chặt chẽ theo nguyên l�
 
 Hệ thống sở hữu một pipeline xử lý dữ liệu (ETL) hoàn chỉnh, khép kín và tự động hóa cao:
 
-### 1. Extraction (Trích xuất tri thức)
-* Sử dụng SPARQL Wrapper ([extractor.py](file:///c:/Users/nguye/social-link-prediction/infrastructure/pipelines/extractor.py)) để truy vấn trực tiếp từ endpoint Wikidata.
-* Cơ chế quét theo khoảng thời gian sinh (birth interval) giúp tải dữ liệu theo từng lô (batch) song song, tránh bị giới hạn băng thông (rate limit) hoặc timeout của Wikidata API.
-* Định nghĩa các câu truy vấn ngữ nghĩa phức tạp trong [queries.py](file:///c:/Users/nguye/social-link-prediction/config/queries.py) cho nhiều loại mối quan hệ: học tập (`educated_at`), làm việc (`employer`), hôn nhân (`spouse`), đồng nghiệp (`colleague` / `member_of_sports_team` / `acted_in`).
+### 1. Ingestion & Trích xuất đa giai đoạn (Extraction)
+* Sử dụng SPARQL Wrapper ([extractor.py](file:///c:/Users/nguye/social-link-prediction/infrastructure/pipelines/extractor.py)) để truy vấn trực tiếp từ endpoint Wikidata dưới dạng bộ ba RDF T = (Chủ thể, Thuộc tính, Đối tượng).
+* Cơ chế quét theo khoảng thời gian sinh (birth interval) song song tránh bị giới hạn băng thông (rate limit) hoặc timeout của Wikidata API.
+* Định nghĩa các câu truy vấn ngữ nghĩa phức tạp trong [queries.py](file:///c:/Users/nguye/social-link-prediction/config/queries.py) cho nhiều loại mối quan hệ: học tập (`educated_at`), làm việc (`work_at`), giải thưởng (`award_received`), quan hệ gia đình (`father`, `mother`, `spouse`), và đồng nghiệp (`colleague` / `member_of_sports_team` / `acted_in`).
 
-### 2. Transformation & Cleansing (Lọc & Chuẩn hóa)
-* **Dọn dẹp và chuẩn hóa dữ liệu** ([transformer.py](file:///c:/Users/nguye/social-link-prediction/infrastructure/pipelines/transformer.py)): Loại bỏ các nút rác, xử lý giá trị khuyết thiếu ở cột năm sinh, giới tính và mô tả.
-* **Lọc cạnh trùng lặp & cạnh ngược**: Loại bỏ các cạnh trùng lặp, chuẩn hóa hướng cạnh và tạo các cạnh nghịch đảo (`rev_`) tự động để chuyển đổi đồ thị thành dạng vô hướng khi cần thiết.
+### 2. Biến đổi, Làm sạch & Lọc trùng (Transformation)
+* Dọn dẹp và chuẩn hóa dữ liệu ([transformer.py](file:///c:/Users/nguye/social-link-prediction/infrastructure/pipelines/transformer.py)): Loại bỏ các vòng tự lặp (self-loops), xử lý giá trị khuyết thiếu ở cột năm sinh, giới tính và mô tả.
+* Lọc cạnh trùng lặp & cạnh ngược bằng khóa tạo lập `(id_min + "_" + id_max + "_" + relation)` giúp đồ thị nhất quán.
 * Lưu trữ dữ liệu làm sạch dưới định dạng Apache Parquet tối ưu hóa tốc độ ghi đọc và dung lượng lưu trữ.
 
-### 3. Feature Engineering & PyG HeteroData Construction (Kỹ nghệ Đặc trưng)
-* **Đặc trưng Ngữ nghĩa (Semantic Features)**: Sử dụng mô hình Transformer ngôn ngữ đa quốc gia Sentence-BERT (`paraphrase-multilingual-MiniLM-L12-v2`) mã hóa thông tin thuộc tính dạng text của nút (tên, mô tả, nghề nghiệp, nơi sinh, quốc gia...) thành một dense vector 384 chiều.
+### 3. Quy mô Đồ thị và Phân tích Topo chuyên sâu
+* **Quy mô dữ liệu**:
+  * **Đỉnh (Nodes)**: 4,609,521 thực thể (bao gồm 3,247,681 nút `human`, 438,293 nút `written_work`, 315,908 nút `film`... thuộc 11 loại nút khác nhau).
+  * **Cạnh (Edges)**: 10,761,807 liên kết hoạt động thuộc 44 loại quan hệ (đứng đầu là `educated_at` với 1,714,215 cạnh và `work_at` với 1,669,322 cạnh).
+* **Kiểm định Phân phối lũy thừa (Power-Law Exponent)**:
+  * Vẽ biểu đồ phân bố bậc CDF/CCDF trên thang đo Log-Log. Hệ số mũ Power-law ước lượng bằng phương pháp Maximum Likelihood Estimation (MLE):
+    
+    `gamma = 1 + n * [ sum( ln(k_i / (k_min - 0.5)) ) ]^-1`
+    
+    Với ngưỡng tối thiểu `k_min = 100`, ta tính ra `gamma = 3.35`. Chỉ số này chứng minh mạng lưới có tính phi tỷ lệ nhưng tiệm cận mạng ngẫu nhiên (Random-like), do các siêu đỉnh (Hubs) chưa chiếm mật độ tuyệt đối để tập trung quyền lực đồ thị.
+
+### 4. Kỹ nghệ Đặc trưng & Khởi tạo PyG HeteroData
+* **Đặc trưng Ngữ nghĩa (Semantic Features)**: Sử dụng mô hình Transformer ngôn ngữ đa quốc gia Sentence-BERT (`paraphrase-multilingual-MiniLM-L12-v2`) mã hóa thông tin thuộc tính dạng text của nút (tên, mô tả, nghề nghiệp, nơi sinh, giới tính, sở thích...) thành một dense vector 384 chiều.
 * **Đặc trưng Cấu trúc (Structural Features)**: 
-  * Sử dụng thư viện đồ thị C-Core igraph tính toán chỉ số Multi-view PageRank theo từng loại cạnh riêng biệt.
-  * Tính toán Bậc kết nối toàn cục (Total Degree) của các nút và chuẩn hóa Log-transform (`log1p`) để triệt tiêu ảnh hưởng của các nút ngoại lai (outliers / hubs cực lớn).
+  * Sử dụng thư viện đồ thị C-Core igraph tính toán chỉ số Multi-view PageRank (45 lượt trên từng loại cạnh) để ghi nhận thuộc tính cấu trúc ẩn.
+  * Tính toán Bậc kết nối toàn cục (Total Degree) của các nút và chuẩn hóa Log-transform (`log1p`) để triệt tiêu ảnh hưởng của các nút ngoại lai.
 * **Đặc trưng Thời gian**: Chuẩn hóa Min-Max năm sinh và tạo vector cờ nhị phân đánh dấu giá trị năm sinh bị khuyết thiếu.
 * **Hợp nhất vector đặc trưng (Feature Concat)**: Tạo ra vector đặc trưng nút hợp nhất 432 chiều:
   
   `x_node = [ v_SBERT(384) || v_year(1) || v_missing_flag(1) || v_PageRank(45) || v_degree(1) ]`
   
-* **Khởi tạo Đồ thị Dị thể (Heterogeneous Graph)**: Map index ID dạng chuỗi (QID) sang local index dạng số nguyên của PyTorch Geometric (PyG), lọc các quan hệ có quá ít cạnh (`MIN_EDGE_COUNT`) để tránh nhiễu và đóng gói thành đối tượng `HeteroData`.
+* **Khởi tạo Đồ thị Dị thể (Heterogeneous Graph)**: Map index ID dạng chuỗi (QID) sang local index dạng số nguyên của PyTorch Geometric (PyG), lọc các quan hệ có quá ít cạnh để tránh nhiễu và đóng gói thành đối tượng `HeteroData`.
 
 ---
 
@@ -209,7 +253,7 @@ Mô hình học máy chính được triển khai bằng PyTorch Geometric (PyG)
 * Điểm số đầu ra được ép qua hàm Sigmoid để đưa về khoảng xác suất `[0.0, 1.0]`.
 
 ### 3. Ràng buộc Logic cứng (Hard Constraints) & Phạt Hub (Hub Penalty)
-Để kết quả dự đoán GNN (Soft Constraint) thực tế và có ý nghĩa xã hội nhất, hệ thống tích hợp thêm:
+* **Khoảng cách Xã hội (Bậc trung gian)**: Định nghĩa chỉ tính trên đỉnh loại `human` (người). Số bậc tương đương số lượng nút người làm cầu nối giữa hai thực thể, giúp kiểm chứng lý thuyết "Sáu bậc xa cách" trên thực tế.
 * **Bộ lọc Cấm kỵ Huyết thống (Taboo Constraints)**: Loại bỏ các gợi ý kết hôn (`spouse`) nếu hai thực thể đã tồn tại mối quan hệ gia đình trực hệ trong đồ thị gốc (cha, mẹ, anh, chị, em).
 * **Phạt chênh lệch tuổi tác (Age Gap Penalty)**: Tự động phạt điểm số liên kết hoặc tăng trọng số đường đi Dijkstra nếu chênh lệch tuổi tác giữa hai thực thể vượt quá ngưỡng cho phép (ví dụ: cách nhau trên 20 tuổi).
 * **Phạt Hub Trung tâm (Hub Penalty)**: Trọng số đường đi Dijkstra qua một đỉnh được tính theo logarit của bậc vào (in-degree):
@@ -254,7 +298,7 @@ streamlit run main.py
 * **/core**: Lớp lõi thuật toán & AI (GNN, BFS/Dijkstra tối ưu, Fuzzy Search).
 * **/infrastructure**: Pipelines ETL Wikidata (Extractor/Transformer) và các repositories lưu trữ.
 * **/application**: Lớp phối hợp nghiệp vụ (AIService, AnalysisService).
-* **/presentation**: Streamlit Web UI và mã nguồn render 4 Tab nghiệp vụ chính.
+* **/presentation**: Streamlit Web UI và mã nguồn render 5 Tab nghiệp vụ chính.
 * **/scripts**: Điểm khởi chạy chạy độc lập hoặc CLI (ETL, train_model).
 
 ---
