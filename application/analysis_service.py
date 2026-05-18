@@ -1,4 +1,3 @@
-from email import message_from_string
 import igraph
 from core.algorithms.bfs import PathFinder
 from core.interfaces import ISearchEngine
@@ -215,7 +214,7 @@ class AnalysisService:
                 final_degrees.append(0)
                 continue
 
-            human_count = sum(self.is_human_list[n] for n in path)
+            human_count = sum(self.is_human_arr[n] for n in path)
             degree_val = max(0, human_count - 1)
             final_degrees.append(degree_val)
         return final_degrees

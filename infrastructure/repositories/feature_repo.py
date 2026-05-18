@@ -52,14 +52,13 @@ class PyGDataRepository(ITrainingDataRepository):
         except Exception as e:
             print(f"REPO ERROR: {e}")
             return None
-        except Exception as e:
-            print(f"REPO ERROR: {e}")
-            return None
+
     def save_adjacency(self, data):
         try:
             os.makedirs(os.path.dirname(self.adjacency_path), exist_ok=True)
-            with gzip.open(self.adjacency_path, 'wb') as f:
+            with open(self.adjacency_path, 'wb') as f:
                 pickle.dump(data, f)
+            return True
         except Exception as e:
             print(f"REPO ERROR: {e}")
             return False

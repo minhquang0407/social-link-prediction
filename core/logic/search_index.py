@@ -8,32 +8,29 @@ from collections import defaultdict
 def build_search_index(G):
     """
     Hàm độc lập tạo chỉ mục tìm kiếm từ đồ thị G.
-    Dựa trên thuộc tính 'normalize_name' đã được tính trước.
+    Dựa trên thuộc tính của igraph.
     """
     print("LOG: Đang xây dựng chỉ mục tìm kiếm (Tối ưu)...")
     search_map = defaultdict(list)
 
-    # Lặp qua các node
-    for node_id, data in G.nodes(data=True):
-        # 1. Lấy key chuẩn hóa (đã tính sẵn ở Transformer)
-        if data['type'] == 'person':
-            clean_key = data.get('normalize_name')
-
-            # 2. Lấy tên gốc
-            original_name = str(data.get('name', 'Unknown'))
+    # Lặp qua các node của igraph
+    for v in G.vs:
+        if v['type'] == 'human':
+            original_name = str(v['label'] if v['label'] else 'Unknown')
+            clean_key = v['name']
 
             if clean_key and original_name:
                 node_info = {
-                    "id": node_id,
+                    "id": v.index,
                     "name": original_name,
-                    "description": str(data.get('description', '')),
-                    "type": data.get('type', 'Unknown')
+                    "description": str(v['description'] if 'description' in v.attributes() else ''),
+                    "type": v['type']
                 }
 
-                # 3. Thêm vào map
+                # Thêm vào map
                 search_map[clean_key].append(node_info)
 
-    # Trả về cả Map (để RapidFuzz dùng)
+    # Trả về cả Map
     return search_map
 
 

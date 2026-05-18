@@ -3,13 +3,15 @@ import sys
 import subprocess
 from pathlib import Path
 
-from config.settings import GRAPH_PATH, MODEL_PATH, PYG_DATA_PATH, MAPPING_PATH
+from config.settings import GRAPH_PATH, MODEL_PATH, PYG_DATA_PATH, MAPPING_PATH, NODES_DATA_PATH
 from infrastructure.repositories import PickleGraphRepository, ModelRepository, PyGDataRepository
 from application import AIService, AnalysisService
-from presentation import AppRunner
-from core.logic import build_search_index
 from core.logic import RapidFuzzySearch
-from core.algorithms import NetworkXBFSFinder
+from core.ai.gnn_architecture import LinkPredictionModel
+from core.ai.predicter import Predictor
+import pandas as pd
+import torch
+
 # --- 1. HÀM LOAD TÀI NGUYÊN VÀ LẮP RÁP SERVICE (BOOTSTRAP) ---
 
 @st.cache_resource(show_spinner="Đang khởi động hệ thống...")
@@ -22,7 +24,7 @@ def bootstrap_services():
     # --- INFRASTRUCTURE (Tầng 1) ---
     graph_repo = PickleGraphRepository(GRAPH_PATH)
     model_repo = ModelRepository(MODEL_PATH)
-    feature_repo = PyGDataRepository(PYG_DATA_PATH,MAPPING_PATH)
+    feature_repo = PyGDataRepository(PYG_DATA_PATH, MAPPING_PATH)
 
     # 1. Load Graph
     G_full = graph_repo.load_graph()
@@ -30,21 +32,43 @@ def bootstrap_services():
         print("LỖI: Không tải được đồ thị G_full.gpickle.")
         return None, None
 
-    # 2. Lấy Search Index
-    search_index = build_search_index(G_full)
+    # 2. Lấy Search Engine & Fuzzy Search
+    try:
+        df_nodes = pd.read_parquet(NODES_DATA_PATH)
+        search_engine = RapidFuzzySearch(df_nodes)
+    except Exception as e:
+        print(f"LỖI: Không tải được df_nodes từ {NODES_DATA_PATH}. Chi tiết: {e}")
+        return None, None
 
-    # 3. Load Model AI
-    ai_model = model_repo.load_model()
-    hetero_data, mapping = feature_repo.load_data()
+    # 3. Load Model AI & PyG Data
+    hetero_data = feature_repo.load_data()
+    if hetero_data is None:
+        print("LỖI: Không tải được hetero_data.pt.")
+        return None, None
+
+    try:
+        metadata = hetero_data.metadata()
+        # Khởi tạo kiến trúc mô hình rỗng
+        model_arch = LinkPredictionModel(hidden_channels=256, out_channels=128, metadata=metadata)
+        # Nạp trọng số từ file model.pt
+        ai_model = model_repo.load_model(model=model_arch)
+    except Exception as e:
+        print(f"LỖI: Không khởi tạo hoặc tải được mô hình AI. Chi tiết: {e}")
+        return None, None
+
     # --- APPLICATION (Tầng 2: Lắp ráp các Service) ---
-
-    search_engine = RapidFuzzySearch(search_index)
-
-    # Lắp ráp các Service)
-    analysis_service = AnalysisService(G_full,search_engine)
-    ai_service = AIService(G_full, ai_model, hetero_data, mapping)
-    # Lắp ráp AI Service
-
+    try:
+        # Khởi tạo bộ máy dự đoán Link Predictor
+        predictor = Predictor(model=ai_model, data=hetero_data)
+        
+        # Lắp ráp các Service
+        analysis_service = AnalysisService(G_full, search_engine)
+        ai_service = AIService(model=ai_model, embeddings=predictor.embeddings, engine=search_engine, predictor=predictor)
+    except Exception as e:
+        print(f"LỖI: Không lắp ráp được các dịch vụ. Chi tiết: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None
 
     print("LOG: Hệ thống Services đã được lắp ráp thành công.")
     return analysis_service, ai_service

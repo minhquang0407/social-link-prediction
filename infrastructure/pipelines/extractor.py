@@ -176,7 +176,7 @@ class WikidataExtractor:
             full_query = BASE_QUERY.replace("##FIND_HOOK##", snippet) # thêm truy vấn  con
             all_bindings = self._run_interval_query(start, end, full_query, page_size, step = step) # chạy truy vấn
 
-            self._save_data(all_bindings, name, RAW_JSON_DIR)  # lưu kết quả
+            self._save_data(all_bindings, name)  # lưu kết quả
 
             time.sleep(1)
 

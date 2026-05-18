@@ -357,7 +357,7 @@ class GraphTransformer:
         print(f"Chạy pipeline từ Raw Directory: {raw_dir}")
         if force_data:
             df = self._ingest_json_to_parquet(raw_dir)
-            df_edges, df_nodes = self._clean_and_procces_data(df)
+            df_edges, df_nodes = self._clean_and_process_data(df)
         else:
             df_edges = pd.read_parquet(EDGES_DATA_PATH, engine='fastparquet')
             df_nodes = pd.read_parquet(NODES_DATA_PATH, engine='fastparquet')

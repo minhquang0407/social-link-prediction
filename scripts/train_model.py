@@ -100,7 +100,7 @@ class HGTLinkPrediction(torch.nn.Module):
         for et in data.edge_types:
             src, rel, dst = et
             if rel.startswith('rev_'): continue
-            key = f"{src}__{rel}__{dst}"
+            key = f"__{rel}__"
 
             # Decoder với input là hidden_channels
             self.decoders[key] = InteractionMLP(hidden_channels, 64, 1, dropout)
@@ -123,7 +123,7 @@ class HGTLinkPrediction(torch.nn.Module):
         z_src = x_start[src_type][edge_label_index[0]]
         z_dst = x_start[dst_type][edge_label_index[1]]
 
-        key = f"{src_type}__{rel}__{dst_type}"
+        key = f"__{rel}__"
         if key in self.decoders:
             return self.decoders[key](z_src, z_dst)
         else:
@@ -144,7 +144,7 @@ class LinkPredictionModel(torch.nn.Module):
             src, rel, dst = et
             if rel.startswith('rev_'): continue
 
-            key = f"{src}__{rel}__{dst}"
+            key = f"__{rel}__"
             # Decoder mới thông minh hơn
             self.decoders[key] = InteractionMLP(out_channels, 64, 1, dropout)
 
@@ -156,7 +156,7 @@ class LinkPredictionModel(torch.nn.Module):
         z_src = z_dict[src_type][edge_label_index[0]]
         z_dst = z_dict[dst_type][edge_label_index[1]]
 
-        key = f"{src_type}__{rel}__{dst_type}"
+        key = f"__{rel}__"
 
         if key in self.decoders:
             return self.decoders[key](z_src, z_dst)
