@@ -257,6 +257,9 @@ Validating the collaborative transfer capacity of the Shared Decoder by predicti
     *   *Conclusion*: This validates that the Shared Decoder successfully transferred structural relational rules from human organizations to higher education institutions without explicit training on those specific node types.
 
 ### 4. GNN Training & Verification Metrics
+
+<img width="934" height="454" alt="image" src="https://github.com/user-attachments/assets/3a9391c0-fe13-468b-9dbb-204e87aaa4b9" />
+
 * **AUC-ROC (Area Under ROC)**: Achieved a validation AUC-ROC metric of **0.78**.
 * **AP (Average Precision)**: Achieved a validation AP metric of **0.82**.
 
@@ -503,6 +506,9 @@ Tìm kiếm và gợi ý 5 ứng viên kết đôi tiềm năng nhất cho diễ
     *   *Kết luận:* Cơ chế Shared Decoder hoạt động hiệu quả qua việc chuyển giao tri thức (Transfer Learning) từ quan hệ `member_of` của con người sang tổ chức.
 
 ### 4. Chỉ số Huấn luyện & Hiệu năng của GNN
+
+<img width="934" height="454" alt="image" src="https://github.com/user-attachments/assets/c4dde69f-ea7f-46cd-a9fa-14f80abc865c" />
+
 * **AUC-ROC (Diện tích dưới đường cong)**: Đạt chỉ số kiểm thử AUC-ROC là **0.78**.
 * **AP (Average Precision)**: Đạt chỉ số kiểm thử độ chính xác trung bình AP là **0.82**.
 
